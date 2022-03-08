@@ -9,974 +9,606 @@
 #include <sys/time.h>
 #include <omp.h>
 #include <mpi.h>
+
 #include "gif_lib.h"
+#include "gif_load_store.h"
 
-/* Set this macro to 1 to enable debugging information */
-#define SOBELF_DEBUG 0
+// minimum number of nodes to switch from a even distribution approach to a server-client approach
+#define MIN_NODES_SERVER_CLIENT 5
 
-/* Represent one pixel from the image */
-typedef struct pixel
+void apply_gray_filter_img(pixel *p, int width, int height)
 {
-    int r ; /* Red */
-    int g ; /* Green */
-    int b ; /* Blue */
-} pixel ;
-
-/* Represent one GIF image (animated or not */
-typedef struct animated_gif
-{
-    int n_images ; /* Number of images */
-    int * width ; /* Width of each image */
-    int * height ; /* Height of each image */
-    pixel ** p ; /* Pixels of each image */
-    GifFileType * g ; /* Internal representation.
-                         DO NOT MODIFY */
-} animated_gif ;
-
-/*
- * Load a GIF image from a file and return a
- * structure of type animated_gif.
- */
-animated_gif *
-load_pixels( char * filename ) 
-{
-    GifFileType * g ;
-    ColorMapObject * colmap ;
-    int error ;
-    int n_images ;
-    int * width ;
-    int * height ;
-    pixel ** p ;
-    int i ;
-
-    animated_gif * image ;
-
-    /* Open the GIF image (read mode) */
-    g = DGifOpenFileName( filename, &error ) ;
-    if ( g == NULL ) 
-    {
-        fprintf( stderr, "Error DGifOpenFileName %s\n", filename ) ;
-        return NULL ;
-    }
-
-    /* Read the GIF image */
-    error = DGifSlurp( g ) ;
-    if ( error != GIF_OK )
-    {
-        fprintf( stderr, 
-                "Error DGifSlurp: %d <%s>\n", error, GifErrorString(g->Error) ) ;
-        return NULL ;
-    }
-
-    /* Grab the number of images and the size of each image */
-    n_images = g->ImageCount ;
-
-    width = (int *)malloc( n_images * sizeof( int ) ) ;
-    if ( width == NULL )
-    {
-        fprintf( stderr, "Unable to allocate width of size %d\n",
-                n_images ) ;
-        return 0 ;
-    }
-
-    height = (int *)malloc( n_images * sizeof( int ) ) ;
-    if ( height == NULL )
-    {
-        fprintf( stderr, "Unable to allocate height of size %d\n",
-                n_images ) ;
-        return 0 ;
-    }
-
-    /* Fill the width and height */
-        
-#pragma omp parallel    
-    {
-#pragma omp for schedule(dynamic) 
-        for (i = 0; i < n_images; i++)
-        {
-            width[i] = g->SavedImages[i].ImageDesc.Width;
-            height[i] = g->SavedImages[i].ImageDesc.Height;
-
-#if SOBELF_DEBUG
-            printf("Image %d: l:%d t:%d w:%d h:%d interlace:%d localCM:%p\n",
-                i,
-                g->SavedImages[i].ImageDesc.Left,
-                g->SavedImages[i].ImageDesc.Top,
-                g->SavedImages[i].ImageDesc.Width,
-                g->SavedImages[i].ImageDesc.Height,
-                g->SavedImages[i].ImageDesc.Interlace,
-                g->SavedImages[i].ImageDesc.ColorMap
-            );
-#endif
-        }
-
-    }
-
-    /* Get the global colormap */
-    colmap = g->SColorMap ;
-    if ( colmap == NULL ) 
-    {
-        fprintf( stderr, "Error global colormap is NULL\n" ) ;
-        return NULL ;
-    }
-
-#if SOBELF_DEBUG
-    printf( "Global color map: count:%d bpp:%d sort:%d\n",
-            g->SColorMap->ColorCount,
-            g->SColorMap->BitsPerPixel,
-            g->SColorMap->SortFlag
-            ) ;
-#endif
-
-    /* Allocate the array of pixels to be returned */
-    p = (pixel **)malloc( n_images * sizeof( pixel * ) ) ;
-    if ( p == NULL )
-    {
-        fprintf( stderr, "Unable to allocate array of %d images\n",
-                n_images ) ;
-        return NULL ;
-    }
-
-
-#pragma omp parallel    
+    int j;
+#pragma omp parallel
     {
 #pragma omp for schedule(dynamic)
-        for (i = 0; i < n_images; i++)
+        for (j = 0; j < width * height; j++)
         {
-            p[i] = (pixel*)malloc(width[i] * height[i] * sizeof(pixel));
-           /*
-            if (p[i] == NULL)
-            {
-                fprintf(stderr, "Unable to allocate %d-th array of %d pixels\n",
-                    i, width[i] * height[i]);
-                return NULL;
-            }
-            */
-        
-        }
+            int moy;
 
-    }
-    /* Fill pixels */
+            moy = (p[j].r + p[j].g + p[j].b) / 3;
+            if (moy < 0)
+                moy = 0;
+            if (moy > 255)
+                moy = 255;
 
-    /* For each image */
-#pragma omp parallel    
-    {
-#pragma omp for schedule(dynamic) 
-        for (i = 0; i < n_images; i++)
-        {
-            int j;
-
-            /* Get the local colormap if needed */
-            if (g->SavedImages[i].ImageDesc.ColorMap)
-            {
-
-                /* TODO No support for local color map */
-               /* fprintf(stderr, "Error: application does not support local colormap\n");
-                return NULL;*/
-
-                colmap = g->SavedImages[i].ImageDesc.ColorMap;
-            }
-            /* Traverse the image and fill pixels */
-
-
-            for (j = 0; j < width[i] * height[i]; j++)
-            {
-                int c;
-
-                c = g->SavedImages[i].RasterBits[j];
-
-                p[i][j].r = colmap->Colors[c].Red;
-                p[i][j].g = colmap->Colors[c].Green;
-                p[i][j].b = colmap->Colors[c].Blue;
-            }
+            p[j].r = moy;
+            p[j].g = moy;
+            p[j].b = moy;
         }
     }
-    /* Allocate image info */
-    image = (animated_gif *)malloc( sizeof(animated_gif) ) ;
-    if ( image == NULL ) 
-    {
-        fprintf( stderr, "Unable to allocate memory for animated_gif\n" ) ;
-        return NULL ;
-    }
-
-    /* Fill image fields */
-    image->n_images = n_images ;
-    image->width = width ;
-    image->height = height ;
-    image->p = p ;
-    image->g = g ;
-
-#if SOBELF_DEBUG
-    printf( "-> GIF w/ %d image(s) with first image of size %d x %d\n",
-            image->n_images, image->width[0], image->height[0] ) ;
-#endif
-
-    return image ;
 }
 
-int output_modified_read_gif( char * filename, GifFileType * g ) 
+void apply_gray_filter(pixel **p, int n_images, int *widths, int *heights)
 {
-    GifFileType * g2 ;
-    int error2 ;
-
-#if SOBELF_DEBUG
-    printf( "Starting output to file %s\n", filename ) ;
-#endif
-
-    g2 = EGifOpenFileName( filename, false, &error2 ) ;
-    if ( g2 == NULL )
-    {
-        fprintf( stderr, "Error EGifOpenFileName %s\n",
-                filename ) ;
-        return 0 ;
-    }
-
-    g2->SWidth = g->SWidth ;
-    g2->SHeight = g->SHeight ;
-    g2->SColorResolution = g->SColorResolution ;
-    g2->SBackGroundColor = g->SBackGroundColor ;
-    g2->AspectByte = g->AspectByte ;
-    g2->SColorMap = g->SColorMap ;
-    g2->ImageCount = g->ImageCount ;
-    g2->SavedImages = g->SavedImages ;
-    g2->ExtensionBlockCount = g->ExtensionBlockCount ;
-    g2->ExtensionBlocks = g->ExtensionBlocks ;
-
-    error2 = EGifSpew( g2 ) ;
-    if ( error2 != GIF_OK ) 
-    {
-        fprintf( stderr, "Error after writing g2: %d <%s>\n", 
-                error2, GifErrorString(g2->Error) ) ;
-        return 0 ;
-    }
-
-    return 1 ;
-}
-
-
-int
-store_pixels( char * filename, animated_gif * image )
-{
-    int n_colors = 0 ;
-    pixel ** p ;
-    int i, j, k ;
-    GifColorType * colormap ;
-
-    /* Initialize the new set of colors */
-    colormap = (GifColorType *)malloc( 256 * sizeof( GifColorType ) ) ;
-    if ( colormap == NULL ) 
-    {
-        fprintf( stderr,
-                "Unable to allocate 256 colors\n" ) ;
-        return 0 ;
-    }
-
-    /* Everything is white by default */
-    for ( i = 0 ; i < 256 ; i++ ) 
-    {
-        colormap[i].Red = 255 ;
-        colormap[i].Green = 255 ;
-        colormap[i].Blue = 255 ;
-    }
-
-    /* Change the background color and store it */
-    int moy ;
-    moy = (
-            image->g->SColorMap->Colors[ image->g->SBackGroundColor ].Red
-            +
-            image->g->SColorMap->Colors[ image->g->SBackGroundColor ].Green
-            +
-            image->g->SColorMap->Colors[ image->g->SBackGroundColor ].Blue
-            )/3 ;
-    if ( moy < 0 ) moy = 0 ;
-    if ( moy > 255 ) moy = 255 ;
-
-#if SOBELF_DEBUG
-    printf( "[DEBUG] Background color (%d,%d,%d) -> (%d,%d,%d)\n",
-            image->g->SColorMap->Colors[ image->g->SBackGroundColor ].Red,
-            image->g->SColorMap->Colors[ image->g->SBackGroundColor ].Green,
-            image->g->SColorMap->Colors[ image->g->SBackGroundColor ].Blue,
-            moy, moy, moy ) ;
-#endif
-
-    colormap[0].Red = moy ;
-    colormap[0].Green = moy ;
-    colormap[0].Blue = moy ;
-
-    image->g->SBackGroundColor = 0 ;
-
-    n_colors++ ;
-
-    /* Process extension blocks in main structure */
-
-    for ( j = 0 ; j < image->g->ExtensionBlockCount ; j++ )
-    {
-        int f ;
-
-        f = image->g->ExtensionBlocks[j].Function ;
-        if ( f == GRAPHICS_EXT_FUNC_CODE )
-        {
-            int tr_color = image->g->ExtensionBlocks[j].Bytes[3] ;
-
-            if ( tr_color >= 0 &&
-                    tr_color < 255 )
-            {
-
-                int found = -1 ;
-
-                moy = 
-                    (
-                     image->g->SColorMap->Colors[ tr_color ].Red
-                     +
-                     image->g->SColorMap->Colors[ tr_color ].Green
-                     +
-                     image->g->SColorMap->Colors[ tr_color ].Blue
-                    ) / 3 ;
-                if ( moy < 0 ) moy = 0 ;
-                if ( moy > 255 ) moy = 255 ;
-
-#if SOBELF_DEBUG
-                printf( "[DEBUG] Transparency color image %d (%d,%d,%d) -> (%d,%d,%d)\n",
-                        i,
-                        image->g->SColorMap->Colors[ tr_color ].Red,
-                        image->g->SColorMap->Colors[ tr_color ].Green,
-                        image->g->SColorMap->Colors[ tr_color ].Blue,
-                        moy, moy, moy ) ;
-#endif
-
-                for ( k = 0 ; k < n_colors ; k++ )
-                {
-                    if ( 
-                            moy == colormap[k].Red
-                            &&
-                            moy == colormap[k].Green
-                            &&
-                            moy == colormap[k].Blue
-                       )
-                    {
-                        found = k ;
-                    }
-                }
-                if ( found == -1  ) 
-                {
-                    if ( n_colors >= 256 ) 
-                    {
-                        fprintf( stderr, 
-                                "Error: Found too many colors inside the image\n"
-                               ) ;
-                        return 0 ;
-                    }
-
-#if SOBELF_DEBUG
-                    printf( "[DEBUG]\tNew color %d\n",
-                            n_colors ) ;
-#endif
-
-                    colormap[n_colors].Red = moy ;
-                    colormap[n_colors].Green = moy ;
-                    colormap[n_colors].Blue = moy ;
-
-
-                    image->g->ExtensionBlocks[j].Bytes[3] = n_colors ;
-
-                    n_colors++ ;
-                } else
-                {
-#if SOBELF_DEBUG
-                    printf( "[DEBUG]\tFound existing color %d\n",
-                            found ) ;
-#endif
-                    image->g->ExtensionBlocks[j].Bytes[3] = found ;
-                }
-            }
-        }
-    }
-
-
-    for ( i = 0 ; i < image->n_images ; i++ )
-    {
-        for ( j = 0 ; j < image->g->SavedImages[i].ExtensionBlockCount ; j++ )
-        {
-            int f ;
-
-            f = image->g->SavedImages[i].ExtensionBlocks[j].Function ;
-            if ( f == GRAPHICS_EXT_FUNC_CODE )
-            {
-                int tr_color = image->g->SavedImages[i].ExtensionBlocks[j].Bytes[3] ;
-
-                if ( tr_color >= 0 &&
-                        tr_color < 255 )
-                {
-
-                    int found = -1 ;
-
-                    moy = 
-                        (
-                         image->g->SColorMap->Colors[ tr_color ].Red
-                         +
-                         image->g->SColorMap->Colors[ tr_color ].Green
-                         +
-                         image->g->SColorMap->Colors[ tr_color ].Blue
-                        ) / 3 ;
-                    if ( moy < 0 ) moy = 0 ;
-                    if ( moy > 255 ) moy = 255 ;
-
-#if SOBELF_DEBUG
-                    printf( "[DEBUG] Transparency color image %d (%d,%d,%d) -> (%d,%d,%d)\n",
-                            i,
-                            image->g->SColorMap->Colors[ tr_color ].Red,
-                            image->g->SColorMap->Colors[ tr_color ].Green,
-                            image->g->SColorMap->Colors[ tr_color ].Blue,
-                            moy, moy, moy ) ;
-#endif
-
-                    for ( k = 0 ; k < n_colors ; k++ )
-                    {
-                        if ( 
-                                moy == colormap[k].Red
-                                &&
-                                moy == colormap[k].Green
-                                &&
-                                moy == colormap[k].Blue
-                           )
-                        {
-                            found = k ;
-                        }
-                    }
-                    if ( found == -1  ) 
-                    {
-                        if ( n_colors >= 256 ) 
-                        {
-                            fprintf( stderr, 
-                                    "Error: Found too many colors inside the image\n"
-                                   ) ;
-                            return 0 ;
-                        }
-
-#if SOBELF_DEBUG
-                        printf( "[DEBUG]\tNew color %d\n",
-                                n_colors ) ;
-#endif
-
-                        colormap[n_colors].Red = moy ;
-                        colormap[n_colors].Green = moy ;
-                        colormap[n_colors].Blue = moy ;
-
-
-                        image->g->SavedImages[i].ExtensionBlocks[j].Bytes[3] = n_colors ;
-
-                        n_colors++ ;
-                    } else
-                    {
-#if SOBELF_DEBUG
-                        printf( "[DEBUG]\tFound existing color %d\n",
-                                found ) ;
-#endif
-                        image->g->SavedImages[i].ExtensionBlocks[j].Bytes[3] = found ;
-                    }
-                }
-            }
-        }
-    }
-
-#if SOBELF_DEBUG
-    printf( "[DEBUG] Number of colors after background and transparency: %d\n",
-            n_colors ) ;
-#endif
-
-    p = image->p ;
-
-    /* Find the number of colors inside the image */
-    for ( i = 0 ; i < image->n_images ; i++ )
-    {
-
-#if SOBELF_DEBUG
-        printf( "OUTPUT: Processing image %d (total of %d images) -> %d x %d\n",
-                i, image->n_images, image->width[i], image->height[i] ) ;
-#endif
-
-        for ( j = 0 ; j < image->width[i] * image->height[i] ; j++ ) 
-        {
-            int found = 0 ;
-            for ( k = 0 ; k < n_colors ; k++ )
-            {
-                if ( p[i][j].r == colormap[k].Red &&
-                        p[i][j].g == colormap[k].Green &&
-                        p[i][j].b == colormap[k].Blue )
-                {
-                    found = 1 ;
-                }
-            }
-
-            if ( found == 0 ) 
-            {
-                if ( n_colors >= 256 ) 
-                {
-                    fprintf( stderr, 
-                            "Error: Found too many colors inside the image\n"
-                           ) ;
-                    return 0 ;
-                }
-
-#if SOBELF_DEBUG
-                printf( "[DEBUG] Found new %d color (%d,%d,%d)\n",
-                        n_colors, p[i][j].r, p[i][j].g, p[i][j].b ) ;
-#endif
-
-                colormap[n_colors].Red = p[i][j].r ;
-                colormap[n_colors].Green = p[i][j].g ;
-                colormap[n_colors].Blue = p[i][j].b ;
-                n_colors++ ;
-            }
-        }
-    }
-
-#if SOBELF_DEBUG
-    printf( "OUTPUT: found %d color(s)\n", n_colors ) ;
-#endif
-
-
-    /* Round up to a power of 2 */
-    if ( n_colors != (1 << GifBitSize(n_colors) ) )
-    {
-        n_colors = (1 << GifBitSize(n_colors) ) ;
-    }
-
-#if SOBELF_DEBUG
-    printf( "OUTPUT: Rounding up to %d color(s)\n", n_colors ) ;
-#endif
-
-    /* Change the color map inside the animated gif */
-    ColorMapObject * cmo ;
-
-    cmo = GifMakeMapObject( n_colors, colormap ) ;
-    if ( cmo == NULL )
-    {
-        fprintf( stderr, "Error while creating a ColorMapObject w/ %d color(s)\n",
-                n_colors ) ;
-        return 0 ;
-    }
-
-    image->g->SColorMap = cmo ;
-
-    /* Update the raster bits according to color map */
-    for ( i = 0 ; i < image->n_images ; i++ )
-    {
-        for ( j = 0 ; j < image->width[i] * image->height[i] ; j++ ) 
-        {
-            int found_index = -1 ;
-            for ( k = 0 ; k < n_colors ; k++ ) 
-            {
-                if ( p[i][j].r == image->g->SColorMap->Colors[k].Red &&
-                        p[i][j].g == image->g->SColorMap->Colors[k].Green &&
-                        p[i][j].b == image->g->SColorMap->Colors[k].Blue )
-                {
-                    found_index = k ;
-                }
-            }
-
-            if ( found_index == -1 ) 
-            {
-                fprintf( stderr,
-                        "Error: Unable to find a pixel in the color map\n" ) ;
-                return 0 ;
-            }
-
-            image->g->SavedImages[i].RasterBits[j] = found_index ;
-        }
-    }
-
-
-    /* Write the final image */
-    if ( !output_modified_read_gif( filename, image->g ) ) { return 0 ; }
-
-    return 1 ;
-}
-
-void
-apply_gray_filter(pixel** p, int n_images, int* width, int* height)
-{
-    int i, j ;
+    int i, j;
 
     for (i = 0; i < n_images; i++)
     {
-
-        #pragma omp parallel
-        {
-            #pragma omp for schedule(dynamic)
-            for (j = 0; j < width[i] * height[i]; j++)
-            {
-                int moy;
-
-                moy = (p[i][j].r + p[i][j].g + p[i][j].b) / 3;
-                if (moy < 0) moy = 0;
-                if (moy > 255) moy = 255;
-
-                p[i][j].r = moy;
-                p[i][j].g = moy;
-                p[i][j].b = moy;
-            }
-        }
-    }
-
-}
-
-#define CONV(l,c,nb_c) \
-    (l)*(nb_c)+(c)
-
-void apply_gray_line(pixel** p, int n_images, int* width, int* height) 
-{
-    int i, j, k ;
-
-   
-    for (i = 0; i < n_images; i++)
-    {
-
-        #pragma omp parallel
-        {
-            #pragma omp for schedule(dynamic) collapse(2)
-            for (k = width[i] / 2; k < width[i]; k++)
-            {
-                for (j = 0; j < 10; j++)
-                {
-                    p[i][CONV(j, k, width[i])].r = 0;
-                    p[i][CONV(j, k, width[i])].g = 0;
-                    p[i][CONV(j, k, width[i])].b = 0;
-                }
-
-            }
-        }
+        apply_gray_filter_img(p[i], widths[i], heights[i]);
     }
 }
 
-void
-apply_blur_filter( pixel** p, int n_images, int* widths, int* heights, int size, int threshold )
+#define CONV(l, c, nb_c) \
+    (l) * (nb_c) + (c)
+
+void apply_blur_filter_img(pixel *p, int width, int height, int size, int threshold)
 {
-    int i, j, k ;
-    int width, height ;
-    int end = 0 ;
-    int n_iter = 0 ;
+    int end = 0;
+    int n_iter = 0;
 
-    pixel * new ;
+    int j, k;
 
+    pixel *new;
 
-    /* Process all images */
-    for ( i = 0 ; i < n_images ; i++ )
+    n_iter = 0;
+
+    /* Allocate array of new pixels */
+    new = (pixel *)malloc(width * height * sizeof(pixel));
+
+    /* Perform at least one blur iteration */
+    do
     {
-        n_iter = 0 ;
-        width = widths[i] ;
-        height = heights[i] ;
+        end = 1;
+        n_iter++;
 
-        /* Allocate array of new pixels */
-        new = (pixel *)malloc(width * height * sizeof( pixel ) ) ;
-
-
-        /* Perform at least one blur iteration */
-        do
+#pragma omp parallel
         {
-            end = 1 ;
-            n_iter++ ;
-
-        #pragma omp parallel    
-            {
-            #pragma omp for schedule(dynamic) collapse(2)
+#pragma omp for schedule(dynamic) collapse(2)
             for (j = 0; j < height - 1; j++)
             {
                 for (k = 0; k < width - 1; k++)
                 {
-                    new[CONV(j, k, width)].r = p[i][CONV(j, k, width)].r;
-                    new[CONV(j, k, width)].g = p[i][CONV(j, k, width)].g;
-                    new[CONV(j, k, width)].b = p[i][CONV(j, k, width)].b;
-                }
-            }
-     }
-
-            /* Apply blur on top part of image (10%) */
-
-#pragma omp parallel    
-            {
-#pragma omp for schedule(dynamic) collapse(2)
-                for (j = size; j < height / 10 - size; j++)
-                {
-                    for (k = size; k < width - size; k++)
-                    {
-                        int stencil_j, stencil_k;
-                        int t_r = 0;
-                        int t_g = 0;
-                        int t_b = 0;
-
-                        for (stencil_j = -size; stencil_j <= size; stencil_j++)
-                        {
-                            for (stencil_k = -size; stencil_k <= size; stencil_k++)
-                            {
-                                t_r += p[i][CONV(j + stencil_j, k + stencil_k, width)].r;
-                                t_g += p[i][CONV(j + stencil_j, k + stencil_k, width)].g;
-                                t_b += p[i][CONV(j + stencil_j, k + stencil_k, width)].b;
-                            }
-                        }
-
-                        new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
-                        new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
-                        new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
-                    }
-                }
-            }
-            
-
-            /* Copy the middle part of the image */
-            j = height / 10 - size;
-            int jj = 0;
-            int limit = height * 0.9 + size;
-#pragma omp parallel    
-            {
-#pragma omp for schedule(dynamic) collapse(2)
-               
-                for (jj = j; jj < limit ; jj++)
-                {
-                    for (k = size; k < width - size; k++)
-                    {
-                        new[CONV(jj, k, width)].r = p[i][CONV(jj, k, width)].r;
-                        new[CONV(jj, k, width)].g = p[i][CONV(jj, k, width)].g;
-                        new[CONV(jj, k, width)].b = p[i][CONV(jj, k, width)].b;
-                    }
-                }
-            }
-            
-#pragma omp parallel    
-            {
-#pragma omp for schedule(dynamic) collapse(2)
-                /* Apply blur on the bottom part of the image (10%) */
-                for (j = height * 0.9 + size; j < height - size; j++)
-                {
-                    for (k = size; k < width - size; k++)
-                    {
-                        int stencil_j, stencil_k;
-                        int t_r = 0;
-                        int t_g = 0;
-                        int t_b = 0;
-
-                        for (stencil_j = -size; stencil_j <= size; stencil_j++)
-                        {
-                            for (stencil_k = -size; stencil_k <= size; stencil_k++)
-                            {
-                                t_r += p[i][CONV(j + stencil_j, k + stencil_k, width)].r;
-                                t_g += p[i][CONV(j + stencil_j, k + stencil_k, width)].g;
-                                t_b += p[i][CONV(j + stencil_j, k + stencil_k, width)].b;
-                            }
-                        }
-
-                        new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
-                        new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
-                        new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
-                    }
-                }
-            }
-
-#pragma omp parallel    
-            {
-#pragma omp for schedule(dynamic) collapse(2)
-                for (j = 1; j < height - 1; j++)
-                {
-                    for (k = 1; k < width - 1; k++)
-                    {
-
-                        float diff_r;
-                        float diff_g;
-                        float diff_b;
-
-                        diff_r = (new[CONV(j, k, width)].r - p[i][CONV(j, k, width)].r);
-                        diff_g = (new[CONV(j, k, width)].g - p[i][CONV(j, k, width)].g);
-                        diff_b = (new[CONV(j, k, width)].b - p[i][CONV(j, k, width)].b);
-
-                        if (diff_r > threshold || -diff_r > threshold
-                            ||
-                            diff_g > threshold || -diff_g > threshold
-                            ||
-                            diff_b > threshold || -diff_b > threshold
-                            ) {
-                            end = 0;
-                        }
-
-                        p[i][CONV(j, k, width)].r = new[CONV(j, k, width)].r;
-                        p[i][CONV(j, k, width)].g = new[CONV(j, k, width)].g;
-                        p[i][CONV(j, k, width)].b = new[CONV(j, k, width)].b;
-                    }
+                    new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
+                    new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
+                    new[CONV(j, k, width)].b = p[CONV(j, k, width)].b;
                 }
             }
         }
-        while ( threshold > 0 && !end ) ;
+
+        /* Apply blur on the image (10%) */
+
+#pragma omp parallel
+        {
+#pragma omp for schedule(dynamic) collapse(2)
+            for (j = size; j < height - size; j++)
+            {
+                for (k = size; k < width - size; k++)
+                {
+                    int stencil_j, stencil_k;
+                    int t_r = 0;
+                    int t_g = 0;
+                    int t_b = 0;
+
+                    for (stencil_j = -size; stencil_j <= size; stencil_j++)
+                    {
+                        for (stencil_k = -size; stencil_k <= size; stencil_k++)
+                        {
+                            t_r += p[CONV(j + stencil_j, k + stencil_k, width)].r;
+                            t_g += p[CONV(j + stencil_j, k + stencil_k, width)].g;
+                            t_b += p[CONV(j + stencil_j, k + stencil_k, width)].b;
+                        }
+                    }
+
+                    new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
+                    new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
+                    new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
+                }
+            }
+        }
+
+#pragma omp parallel
+        {
+#pragma omp for schedule(dynamic) collapse(2)
+            for (j = 1; j < height - 1; j++)
+            {
+                for (k = 1; k < width - 1; k++)
+                {
+
+                    float diff_r;
+                    float diff_g;
+                    float diff_b;
+
+                    diff_r = (new[CONV(j, k, width)].r - p[CONV(j, k, width)].r);
+                    diff_g = (new[CONV(j, k, width)].g - p[CONV(j, k, width)].g);
+                    diff_b = (new[CONV(j, k, width)].b - p[CONV(j, k, width)].b);
+
+                    if (diff_r > threshold || -diff_r > threshold ||
+                        diff_g > threshold || -diff_g > threshold ||
+                        diff_b > threshold || -diff_b > threshold)
+                    {
+                        end = 0;
+                    }
+
+                    p[CONV(j, k, width)].r = new[CONV(j, k, width)].r;
+                    p[CONV(j, k, width)].g = new[CONV(j, k, width)].g;
+                    p[CONV(j, k, width)].b = new[CONV(j, k, width)].b;
+                }
+            }
+        }
+    } while (threshold > 0 && !end);
 
 #if SOBELF_DEBUG
-	printf( "BLUR: number of iterations for image %d\n", n_iter ) ;
+    printf("BLUR: number of iterations for image %d\n", n_iter);
 #endif
 
-        free (new) ;
-    }
-
+    free(new);
 }
 
-void
-apply_sobel_filter( pixel** p, int n_images, int* widths, int* heights )
+void apply_blur_filter(pixel **p, int n_images, int *widths, int *heights, int size, int threshold)
 {
-    int i, j, k ;
-    int width, height;
-
-    for ( i = 0 ; i < n_images ; i++ )
+    int i;
+    /* Process all images */
+    for (i = 0; i < n_images; i++)
     {
-        width = widths[i] ;
-        height = heights[i] ;
+        int top_size = heights[i] / 10;
+        // apply blur on the top part
+        apply_blur_filter_img(p[i], widths[i], top_size, size, threshold);
+        int bottom_size = heights[i] - (int)(heights[i] * 0.9);
+        int bottom_start = heights[i] * 0.9;
+        // apply blur on the bottom part
+        apply_blur_filter_img(p[i] + widths[i] * bottom_start, widths[i], bottom_size, size, threshold);
+    }
+}
 
-        pixel * sobel ;
+void apply_sobel_filter_img(pixel *p, int width, int height)
+{
 
-        sobel = (pixel *)malloc(width * height * sizeof( pixel ) ) ;
+    int j, k;
+    pixel *sobel;
 
-#pragma omp parallel    
-        {
+    sobel = (pixel *)malloc(width * height * sizeof(pixel));
+
+#pragma omp parallel
+    {
 #pragma omp for schedule(dynamic) collapse(2)
-            for (j = 1; j < height - 1; j++)
+        for (j = 1; j < height - 1; j++)
+        {
+            for (k = 1; k < width - 1; k++)
             {
-                for (k = 1; k < width - 1; k++)
+                int pixel_blue_no, pixel_blue_n, pixel_blue_ne;
+                int pixel_blue_so, pixel_blue_s, pixel_blue_se;
+                int pixel_blue_o, pixel_blue, pixel_blue_e;
+
+                float deltaX_blue;
+                float deltaY_blue;
+                float val_blue;
+
+                pixel_blue_no = p[CONV(j - 1, k - 1, width)].b;
+                pixel_blue_n = p[CONV(j - 1, k, width)].b;
+                pixel_blue_ne = p[CONV(j - 1, k + 1, width)].b;
+                pixel_blue_so = p[CONV(j + 1, k - 1, width)].b;
+                pixel_blue_s = p[CONV(j + 1, k, width)].b;
+                pixel_blue_se = p[CONV(j + 1, k + 1, width)].b;
+                pixel_blue_o = p[CONV(j, k - 1, width)].b;
+                pixel_blue = p[CONV(j, k, width)].b;
+                pixel_blue_e = p[CONV(j, k + 1, width)].b;
+
+                deltaX_blue = -pixel_blue_no + pixel_blue_ne - 2 * pixel_blue_o + 2 * pixel_blue_e - pixel_blue_so + pixel_blue_se;
+
+                deltaY_blue = pixel_blue_se + 2 * pixel_blue_s + pixel_blue_so - pixel_blue_ne - 2 * pixel_blue_n - pixel_blue_no;
+
+                val_blue = sqrt(deltaX_blue * deltaX_blue + deltaY_blue * deltaY_blue) / 4;
+
+                if (val_blue > 50)
                 {
-                    int pixel_blue_no, pixel_blue_n, pixel_blue_ne;
-                    int pixel_blue_so, pixel_blue_s, pixel_blue_se;
-                    int pixel_blue_o, pixel_blue, pixel_blue_e;
-
-                    float deltaX_blue;
-                    float deltaY_blue;
-                    float val_blue;
-
-                    pixel_blue_no = p[i][CONV(j - 1, k - 1, width)].b;
-                    pixel_blue_n = p[i][CONV(j - 1, k, width)].b;
-                    pixel_blue_ne = p[i][CONV(j - 1, k + 1, width)].b;
-                    pixel_blue_so = p[i][CONV(j + 1, k - 1, width)].b;
-                    pixel_blue_s = p[i][CONV(j + 1, k, width)].b;
-                    pixel_blue_se = p[i][CONV(j + 1, k + 1, width)].b;
-                    pixel_blue_o = p[i][CONV(j, k - 1, width)].b;
-                    pixel_blue = p[i][CONV(j, k, width)].b;
-                    pixel_blue_e = p[i][CONV(j, k + 1, width)].b;
-
-                    deltaX_blue = -pixel_blue_no + pixel_blue_ne - 2 * pixel_blue_o + 2 * pixel_blue_e - pixel_blue_so + pixel_blue_se;
-
-                    deltaY_blue = pixel_blue_se + 2 * pixel_blue_s + pixel_blue_so - pixel_blue_ne - 2 * pixel_blue_n - pixel_blue_no;
-
-                    val_blue = sqrt(deltaX_blue * deltaX_blue + deltaY_blue * deltaY_blue) / 4;
-
-
-                    if (val_blue > 50)
-                    {
-                        sobel[CONV(j, k, width)].r = 255;
-                        sobel[CONV(j, k, width)].g = 255;
-                        sobel[CONV(j, k, width)].b = 255;
-                    }
-                    else
-                    {
-                        sobel[CONV(j, k, width)].r = 0;
-                        sobel[CONV(j, k, width)].g = 0;
-                        sobel[CONV(j, k, width)].b = 0;
-                    }
+                    sobel[CONV(j, k, width)].r = 255;
+                    sobel[CONV(j, k, width)].g = 255;
+                    sobel[CONV(j, k, width)].b = 255;
+                }
+                else
+                {
+                    sobel[CONV(j, k, width)].r = 0;
+                    sobel[CONV(j, k, width)].g = 0;
+                    sobel[CONV(j, k, width)].b = 0;
                 }
             }
         }
-
-#pragma omp parallel    
-        {
-#pragma omp for schedule(dynamic) collapse(2)
-            for (j = 1; j < height - 1; j++)
-            {
-                for (k = 1; k < width - 1; k++)
-                {
-                    p[i][CONV(j, k, width)].r = sobel[CONV(j, k, width)].r;
-                    p[i][CONV(j, k, width)].g = sobel[CONV(j, k, width)].g;
-                    p[i][CONV(j, k, width)].b = sobel[CONV(j, k, width)].b;
-                }
-            }
-        }
-        free (sobel) ;
     }
 
+#pragma omp parallel
+    {
+#pragma omp for schedule(dynamic) collapse(2)
+        for (j = 1; j < height - 1; j++)
+        {
+            for (k = 1; k < width - 1; k++)
+            {
+                p[CONV(j, k, width)].r = sobel[CONV(j, k, width)].r;
+                p[CONV(j, k, width)].g = sobel[CONV(j, k, width)].g;
+                p[CONV(j, k, width)].b = sobel[CONV(j, k, width)].b;
+            }
+        }
+    }
+    free(sobel);
+}
+
+void apply_sobel_filter(pixel **p, int n_images, int *widths, int *heights)
+{
+    int i;
+
+    for (i = 0; i < n_images; i++)
+    {
+
+        apply_sobel_filter_img(p[i], widths[i], heights[i]);
+    }
 }
 
 int rank, nb_proc;
 
-/*
- * Main entry point
- */
-int 
-main( int argc, char ** argv )
+const int tag_ready = 10000;
+const int tag_send_size = 10001;
+const int tag_send_dim = 10002;
+const int tag_send_top = 10003;
+const int tag_send_bottom = 10004;
+const int tag_send_middle_part = 10005;
+const int tag_sobelf_complete = 10006;
+
+typedef struct Request
 {
-    char * input_filename ; 
-    char * output_filename ;
-    animated_gif * image ;
+    int image_nb;
+    int height_start;
+    int height;
+} Request;
+
+const int blur_size = 5;
+const int blur_threshold = 20;
+
+// code executed by node 0, distribute tasks to clients
+void server(int argc, char **argv)
+{
+    char *input_filename;
+    char *output_filename;
+    animated_gif *image;
     struct timeval t1, t2;
-    double duration ;
+    double duration;
     int i;
 
-    MPI_Init(&argc, &argv);
-    MPI_Comm_size(MPI_COMM_WORLD, &nb_proc);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    input_filename = argv[1];
+    output_filename = argv[2];
 
-    pixel** p;
-    int n_images;
-    int *widths, *heights;
-    int* distribution;
+    /* IMPORT Timer start */
+    gettimeofday(&t1, NULL);
 
-    if(rank == 0){
-        /* Check command-line arguments */
-        if ( argc < 3 )
+    /* Load file and store the pixels in array */
+    image = load_pixels(input_filename);
+    if (image == NULL)
+    {
+        return;
+    }
+
+    /* IMPORT Timer stop */
+    gettimeofday(&t2, NULL);
+
+    duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
+
+    printf("GIF loaded from file %s with %d image(s) in %lf s\n",
+           input_filename, image->n_images, duration);
+
+    /* FILTER Timer start */
+    gettimeofday(&t1, NULL);
+
+    Request *requests = (Request *)malloc(nb_proc * sizeof(Request));
+    for (int i = 0; i < nb_proc; i++)
+    {
+        // this proc is not doing any request right now
+        requests[i].image_nb = -1;
+    }
+
+    // first send all top and bottom parts
+    for (int i = 0; i < image->n_images; i++)
+    {
+        for (int k = 0; k < 2; k++)
         {
-            fprintf( stderr, "Usage: %s input.gif output.gif \n", argv[0] ) ;
-            return 1 ;
+            MPI_Status stat;
+            MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &stat);
+            Request req = requests[stat.MPI_SOURCE];
+            if (req.image_nb != -1)
+            {
+                // receive img
+                pixel *loc = image->p[req.image_nb] + req.height_start * image->width[req.image_nb];
+                MPI_Recv(loc, req.height * image->width[req.image_nb] * sizeof(pixel),
+                         MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
+            }
+            else
+            {
+                // TODO: can we cancel it instead?
+                // empty req
+                MPI_Recv(NULL, 0,
+                         MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
+            }
+
+            pixel *start_loc;
+            int height;
+            int recv_height;
+            int recv_height_start;
+            int tag;
+            if (k == 0)
+            {
+                start_loc = image->p[i];
+                recv_height = image->height[i] / 10;
+                height = recv_height + 1;
+                recv_height_start = 0;
+                tag = tag_send_bottom;
+            }
+            else
+            {
+                start_loc = image->p[i] + image->width[i] * (int)(image->height[i] * 0.9);
+                start_loc -= image->width[i];
+                recv_height = image->height[i] - (image->height[i] * 0.9);
+                height = recv_height + 1;
+                recv_height_start = (int)(image->height[i] * 0.9);
+                tag = tag_send_top;
+            }
+            // first send dims
+            int img_dims[] = {image->width[i], height};
+            MPI_Send(img_dims, 2, MPI_INT, stat.MPI_SOURCE, tag_send_dim, MPI_COMM_WORLD);
+            // then pixels
+            MPI_Send(start_loc, height * image->width[i] * sizeof(pixel),
+                     MPI_BYTE, stat.MPI_SOURCE, tag, MPI_COMM_WORLD);
+
+            requests[stat.MPI_SOURCE].image_nb = i;
+            requests[stat.MPI_SOURCE].height_start = recv_height_start;
+            requests[stat.MPI_SOURCE].height = recv_height;
+        }
+    }
+
+    // then send all the remaining parts of the picture
+    // get a send size so that each proc does not get too many requests
+    int best_height = (image->height[0] * image->n_images) / (3 * nb_proc);
+    if (best_height < 10)
+    {
+        // not too small
+        best_height = 10;
+    }
+
+    for (int i = 0; i < image->n_images; i++)
+    {
+        int curr_height = image->height[i] / 10;
+        int end_eight = image->height[i] * 0.9;
+        while (curr_height < end_eight)
+        {
+            MPI_Status stat;
+            MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &stat);
+            Request req = requests[stat.MPI_SOURCE];
+            if (req.image_nb != -1)
+            {
+                // receive img
+                pixel *loc = image->p[req.image_nb] + req.height_start * image->width[req.image_nb];
+                MPI_Recv(loc, image->height[req.image_nb] * image->width[req.image_nb] * sizeof(pixel),
+                         MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
+            }
+            else
+            {
+                // TODO: can we cancel it instead?
+                // empty req
+                MPI_Recv(NULL, 0,
+                         MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
+            }
+
+            pixel *start_loc = image->p[i] + image->width[i] * (curr_height - 1);
+            int height = best_height;
+            if(height > end_eight - curr_height){
+                height = end_eight - curr_height;
+            }
+
+            int send_height = height + 2;
+
+            // first send dims
+            int img_dims[] = {image->width[i], send_height};
+            MPI_Send(img_dims, 2, MPI_INT, stat.MPI_SOURCE, tag_send_dim, MPI_COMM_WORLD);
+            // then pixels
+            MPI_Send(start_loc, send_height * image->width[i] * sizeof(pixel),
+                     MPI_BYTE, stat.MPI_SOURCE, tag_send_middle_part, MPI_COMM_WORLD);
+
+            requests[stat.MPI_SOURCE].image_nb = i;
+            requests[stat.MPI_SOURCE].height_start = curr_height;
+            requests[stat.MPI_SOURCE].height = height;
+
+            curr_height += height;
+        }
+    }
+
+    // make sure we received all images
+    for (int r = 1; r < nb_proc; r++)
+    {
+        if (requests[r].image_nb != -1)
+        {
+            MPI_Status stat;
+            MPI_Probe(r, MPI_ANY_TAG, MPI_COMM_WORLD, &stat);
+            Request req = requests[r];
+            if (req.image_nb != -1)
+            {
+                // receive img
+                pixel *loc = image->p[req.image_nb] + req.height_start * image->width[req.image_nb];
+                MPI_Recv(loc, image->height[req.image_nb] * image->width[req.image_nb] * sizeof(pixel),
+                         MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
+            }
+            else
+            {
+                // empty req
+                MPI_Recv(NULL, 0,
+                         MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
+            }
         }
 
-        input_filename = argv[1] ;
-        output_filename = argv[2] ;
+        // tell proc we are done
+        MPI_Send(NULL, 0, MPI_INT, r, tag_sobelf_complete, MPI_COMM_WORLD);
+    }
+
+    free(requests);
+
+    /* FILTER Timer stop */
+    gettimeofday(&t2, NULL);
+
+    duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
+
+    printf("SOBEL done in %lf s\n", duration);
+
+    /* EXPORT Timer start */
+    gettimeofday(&t1, NULL);
+
+    /* Store file from array of pixels to GIF file */
+    if (!store_pixels(output_filename, image))
+    {
+        return;
+    }
+
+    /* EXPORT Timer stop */
+    gettimeofday(&t2, NULL);
+
+    duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
+
+    printf("Export done in %lf s in file %s\n", duration, output_filename);
+}
+
+// code executed by all mpi nodes != 0, apply sobel filters on parts of the image received
+void client()
+{
+    int i;
+
+    // send msg telling the server it is ready
+    MPI_Send(NULL, 0, MPI_INT, 0, tag_ready, MPI_COMM_WORLD);
+
+    // while no sobelf_complete tag is sent
+    while (1)
+    {
+        MPI_Status stat;
+        int dims[2];
+        MPI_Recv(dims, 2, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &stat);
+
+        if(stat.MPI_TAG == tag_sobelf_complete){
+            return;
+        }
+        // stat.tag should be mpi_send_dims
+
+        int width = dims[0];
+        int height = dims[1];
+        pixel *p = (pixel *)malloc(width * height * sizeof(pixel));
+        MPI_Recv(p, width * height * sizeof(pixel), MPI_BYTE, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &stat);
+
+        /* Convert the pixels into grayscale */
+        apply_gray_filter_img(p, width, height);
+
+        /* Apply blur filter with convergence value */
+        if(stat.MPI_TAG == tag_send_bottom){
+            apply_blur_filter_img(p, width, height-1, blur_size, blur_threshold);
+        } else if(stat.MPI_TAG == tag_send_top){
+            apply_blur_filter_img(p + width, width, height-1, blur_size, blur_threshold);
+        }
+
+        
+        /* Apply sobel filter on pixels */
+        apply_sobel_filter_img(p, width, height);
+
+        pixel* send_p = p;
+        int send_height = height;
+
+        if(stat.MPI_TAG != tag_send_bottom){
+            send_p += width;
+            send_height--;
+        }
+        if(stat.MPI_TAG != tag_send_top){
+            send_height--;
+        }
+
+        MPI_Send(send_p, width * send_height * sizeof(pixel), MPI_BYTE, 0, tag_ready, MPI_COMM_WORLD);
+
+        free(p);
+    }
+}
+
+void even_distribution(int argc, char **argv)
+{
+    char *input_filename;
+    char *output_filename;
+    animated_gif *image;
+    struct timeval t1, t2;
+    double duration;
+    int i;
+
+    pixel **p;
+    int n_images;
+    int *widths, *heights;
+    int *distribution;
+    if (rank == 0)
+    {
+
+        input_filename = argv[1];
+        output_filename = argv[2];
 
         /* IMPORT Timer start */
         gettimeofday(&t1, NULL);
 
         /* Load file and store the pixels in array */
-        image = load_pixels( input_filename ) ;
-        if ( image == NULL ) { return 1 ; }
+        image = load_pixels(input_filename);
+        if (image == NULL)
+        {
+            return;
+        }
 
         /* IMPORT Timer stop */
         gettimeofday(&t2, NULL);
 
-        duration = (t2.tv_sec -t1.tv_sec)+((t2.tv_usec-t1.tv_usec)/1e6);
+        duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
 
-        printf( "GIF loaded from file %s with %d image(s) in %lf s\n", 
-                input_filename, image->n_images, duration ) ;
+        printf("GIF loaded from file %s with %d image(s) in %lf s\n",
+               input_filename, image->n_images, duration);
 
         /* FILTER Timer start */
         gettimeofday(&t1, NULL);
 
         // on envoie en premier le nombre d'images par processeur
-        distribution = (int*)malloc(nb_proc * sizeof(int));
-        int* offsets = (int*)malloc(nb_proc * sizeof(int));
+        distribution = (int *)malloc(nb_proc * sizeof(int));
+        int *offsets = (int *)malloc(nb_proc * sizeof(int));
         offsets[0] = 0;
         int reste = image->n_images % nb_proc;
-        for(i = 0; i < nb_proc; i++){
+        for (i = 0; i < nb_proc; i++)
+        {
             distribution[i] = (image->n_images / nb_proc) + (i < reste);
-            if(i > 0){
-                offsets[i] = offsets[i-1] + distribution[i-1];
+            if (i > 0)
+            {
+                offsets[i] = offsets[i - 1] + distribution[i - 1];
             }
         }
-        MPI_Scatter(distribution, nb_proc, MPI_INT, &n_images, 1, MPI_INT, 0 , MPI_COMM_WORLD);
+        MPI_Scatter(distribution, nb_proc, MPI_INT, &n_images, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
         // send width and height
-        widths = (int*)malloc(n_images * sizeof(int));
-        heights = (int*)malloc(n_images * sizeof(int));
+        widths = (int *)malloc(n_images * sizeof(int));
+        heights = (int *)malloc(n_images * sizeof(int));
 
         MPI_Scatterv(image->width, distribution, offsets, MPI_INT, widths, n_images, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Scatterv(image->height, distribution, offsets, MPI_INT, heights, n_images, MPI_INT, 0, MPI_COMM_WORLD);
 
         // send images one by one
         int image_idx = distribution[0];
-        for(i = 1; i < nb_proc; i++){
+        for (i = 1; i < nb_proc; i++)
+        {
             int k;
-            for(k = 0; k < distribution[i]; k++){
+            for (k = 0; k < distribution[i]; k++)
+            {
                 // TODO: do this asynchronously
                 MPI_Send(image->p[image_idx], (image->width[image_idx] * image->height[image_idx]) * sizeof(pixel),
-                    MPI_BYTE, i, 0, MPI_COMM_WORLD);
+                         MPI_BYTE, i, 0, MPI_COMM_WORLD);
                 image_idx++;
             }
         }
@@ -984,76 +616,99 @@ main( int argc, char ** argv )
         p = image->p;
 
         free(offsets);
-
-    } else {
+    }
+    else
+    {
         MPI_Scatter(NULL, 0, MPI_INT, &n_images, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-        widths = (int*)malloc(n_images * sizeof(int));
-        heights = (int*)malloc(n_images * sizeof(int));
+        widths = (int *)malloc(n_images * sizeof(int));
+        heights = (int *)malloc(n_images * sizeof(int));
 
         MPI_Scatterv(NULL, NULL, NULL, MPI_INT, widths, n_images, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Scatterv(NULL, NULL, NULL, MPI_INT, heights, n_images, MPI_INT, 0, MPI_COMM_WORLD);
 
-        p = (pixel**)malloc(n_images * sizeof(pixel*));
-        for(i = 0; i < n_images; i++){
-            p[i] = (pixel*)malloc(widths[i] * heights[i] * sizeof(pixel));
+        p = (pixel **)malloc(n_images * sizeof(pixel *));
+        for (i = 0; i < n_images; i++)
+        {
+            p[i] = (pixel *)malloc(widths[i] * heights[i] * sizeof(pixel));
             MPI_Status stat;
-            MPI_Recv(p[i], widths[i] * heights[i] * sizeof(pixel),MPI_BYTE, 0, 0, MPI_COMM_WORLD, &stat);
+            MPI_Recv(p[i], widths[i] * heights[i] * sizeof(pixel), MPI_BYTE, 0, 0, MPI_COMM_WORLD, &stat);
         }
     }
 
     /* Convert the pixels into grayscale */
-    apply_gray_filter( p, n_images, widths, heights ) ;
+    apply_gray_filter(p, n_images, widths, heights);
 
     /* Apply blur filter with convergence value */
-    apply_blur_filter( p, n_images, widths, heights, 5, 20 ) ;
+    apply_blur_filter(p, n_images, widths, heights, blur_size, blur_threshold);
 
     /* Apply sobel filter on pixels */
-    apply_sobel_filter( p, n_images, widths, heights ) ;
+    apply_sobel_filter(p, n_images, widths, heights);
 
     // on recupere toutes les images sur le proc 0
-    if(rank == 0){
+    if (rank == 0)
+    {
         int image_idx = distribution[0];
-        for(i = 1; i < nb_proc; i++){
+        for (i = 1; i < nb_proc; i++)
+        {
             int k;
-            for(k = 0; k < distribution[i]; k++){
+            for (k = 0; k < distribution[i]; k++)
+            {
                 MPI_Status stat;
                 MPI_Recv(image->p[image_idx], (image->width[image_idx] * image->height[image_idx]) * sizeof(pixel),
-                    MPI_BYTE, i, 0, MPI_COMM_WORLD, &stat);
+                         MPI_BYTE, i, 0, MPI_COMM_WORLD, &stat);
                 image_idx++;
             }
         }
-    } else {
-        for(i = 0; i < n_images; i++){
+    }
+    else
+    {
+        for (i = 0; i < n_images; i++)
+        {
             MPI_Send(p[i], widths[i] * heights[i] * sizeof(pixel),
-                MPI_BYTE, 0, 0, MPI_COMM_WORLD);
+                     MPI_BYTE, 0, 0, MPI_COMM_WORLD);
         }
     }
 
-    if(rank == 0){
-        /* FILTER Timer stop */
-        gettimeofday(&t2, NULL);
-
-        duration = (t2.tv_sec -t1.tv_sec)+((t2.tv_usec-t1.tv_usec)/1e6);
-
-        printf( "SOBEL done in %lf s\n", duration ) ;
-
-        /* EXPORT Timer start */
-        gettimeofday(&t1, NULL);
-
-        /* Store file from array of pixels to GIF file */
-        if ( !store_pixels( output_filename, image ) ) { return 1 ; }
-
-        /* EXPORT Timer stop */
-        gettimeofday(&t2, NULL);
-
-        duration = (t2.tv_sec -t1.tv_sec)+((t2.tv_usec-t1.tv_usec)/1e6);
-
-        printf( "Export done in %lf s in file %s\n", duration, output_filename ) ;
-
+    if (rank == 0)
+    {
     }
-    
+}
+
+/*
+ * Main entry point
+ */
+int main(int argc, char **argv)
+{
+
+    MPI_Init(&argc, &argv);
+    MPI_Comm_size(MPI_COMM_WORLD, &nb_proc);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    /* Check command-line arguments */
+    if (rank == 0 && argc < 3)
+    {
+        fprintf(stderr, "Usage: %s input.gif output.gif \n", argv[0]);
+        return 1;
+    }
+
+    if (nb_proc < MIN_NODES_SERVER_CLIENT)
+    {
+        even_distribution(argc, argv);
+    }
+    else
+    {
+        if (rank == 0)
+        {
+            server(argc, argv);
+        }
+        else
+        {
+            client();
+        }
+    }
+
     MPI_Finalize();
 
-    return 0 ;
+    return 0;
 }
