@@ -9,6 +9,7 @@
 #include <sys/time.h>
 #include <omp.h>
 #include <mpi.h>
+#include <unistd.h>
 
 #include "gif_lib.h"
 #include "gif_load_store.h"
@@ -407,7 +408,8 @@ void server(int argc, char **argv)
 
             pixel *start_loc = image->p[i] + image->width[i] * (curr_height - 1);
             int height = best_height;
-            if(height > end_eight - curr_height){
+            if (height > end_eight - curr_height)
+            {
                 height = end_eight - curr_height;
             }
 
@@ -496,7 +498,8 @@ void client()
         int dims[2];
         MPI_Recv(dims, 2, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &stat);
 
-        if(stat.MPI_TAG == tag_sobelf_complete){
+        if (stat.MPI_TAG == tag_sobelf_complete)
+        {
             return;
         }
         // stat.tag should be mpi_send_dims
@@ -510,24 +513,28 @@ void client()
         apply_gray_filter_img(p, width, height);
 
         /* Apply blur filter with convergence value */
-        if(stat.MPI_TAG == tag_send_bottom){
-            apply_blur_filter_img(p, width, height-1, blur_size, blur_threshold);
-        } else if(stat.MPI_TAG == tag_send_top){
-            apply_blur_filter_img(p + width, width, height-1, blur_size, blur_threshold);
+        if (stat.MPI_TAG == tag_send_bottom)
+        {
+            apply_blur_filter_img(p, width, height - 1, blur_size, blur_threshold);
+        }
+        else if (stat.MPI_TAG == tag_send_top)
+        {
+            apply_blur_filter_img(p + width, width, height - 1, blur_size, blur_threshold);
         }
 
-        
         /* Apply sobel filter on pixels */
         apply_sobel_filter_img(p, width, height);
 
-        pixel* send_p = p;
+        pixel *send_p = p;
         int send_height = height;
 
-        if(stat.MPI_TAG != tag_send_bottom){
+        if (stat.MPI_TAG != tag_send_bottom)
+        {
             send_p += width;
             send_height--;
         }
-        if(stat.MPI_TAG != tag_send_top){
+        if (stat.MPI_TAG != tag_send_top)
+        {
             send_height--;
         }
 
@@ -590,7 +597,7 @@ void even_distribution(int argc, char **argv)
                 offsets[i] = offsets[i - 1] + distribution[i - 1];
             }
         }
-        MPI_Scatter(distribution, nb_proc, MPI_INT, &n_images, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Scatter(distribution, 1, MPI_INT, &n_images, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
         // send width and height
         widths = (int *)malloc(n_images * sizeof(int));
@@ -672,6 +679,28 @@ void even_distribution(int argc, char **argv)
 
     if (rank == 0)
     {
+        /* FILTER Timer stop */
+        gettimeofday(&t2, NULL);
+
+        duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
+
+        printf("SOBEL done in %lf s\n", duration);
+
+        /* EXPORT Timer start */
+        gettimeofday(&t1, NULL);
+
+        /* Store file from array of pixels to GIF file */
+        if (!store_pixels(output_filename, image))
+        {
+            return;
+        }
+
+        /* EXPORT Timer stop */
+        gettimeofday(&t2, NULL);
+
+        duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
+
+        printf("Export done in %lf s in file %s\n", duration, output_filename);
     }
 }
 
