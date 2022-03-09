@@ -847,6 +847,128 @@ apply_sobel_filter(animated_gif* image)
 
 }
 
+//CUDA PART
+
+
+#define numThread 5 // 5 threads in a block
+#define numBlock 6  // 6 blocks
+
+
+//load the image to GPU
+void loadImageToCuda(animated_gif* image, int index,  pixel* d_p) {
+
+    //Memory allocation on cuda
+    cudaMalloc((void**)&d_p,
+        image->height[index] * image->width[index] * sizeof(pixel));
+   
+    cudaMemcpy(d_p, image->pixel[index],
+        image->height[index] * image->width[index] * sizeof(pixel),
+        cudaMemcpyHostToDevice);
+}
+
+//load the image from GPU back to CPU
+void loadImageToHost(animated_gif* image, int index, pixel* d_p) {
+
+    cudaMemcpy(image->pixel[index] , d_p,
+        image->height[index] * image->width[index] * sizeof(pixel),
+        cudaMemcpyDeviceToHost);
+
+}
+
+
+void freeDataFromCuda(pixel* d_p) {
+    
+    free(d_p);
+
+}
+
+
+/* Function to apply gray filter on Cuda*/
+__global__ void apply_gray_filter_on_Cuda_kernel(pixel* d_p, int height, int width)
+{
+
+    int i;
+    i = blockDim.x * blockIdx.x + threadIdx.x;
+    int total = numThread * numBlock;
+    while (i < length) {
+
+        int moy;
+
+        moy = (p[i].r + p[i].g + p[i].b) / 3;
+        if (moy < 0) moy = 0;
+        if (moy > 255) moy = 255;
+
+        d_p[i].r = moy;
+        d_p[i].g = moy;
+        d_p[i].b = moy;
+
+
+        i += total;
+    } 
+
+}
+
+void
+apply_gray_filter(animated_gif* image)
+{
+    int i, j;
+    pixel** p;
+
+    p = image->p;
+
+    for (i = 0; i < image->n_images; i++)
+    {
+        for (j = 0; j < image->width[i] * image->height[i]; j++)
+        {
+            int moy;
+
+            moy = (p[i][j].r + p[i][j].g + p[i][j].b) / 3;
+            if (moy < 0) moy = 0;
+            if (moy > 255) moy = 255;
+
+            p[i][j].r = moy;
+            p[i][j].g = moy;
+            p[i][j].b = moy;
+        }
+    }
+}
+
+
+
+void apply_gray_filter_on_Cuda(animated_gif* image) {
+
+    int i;
+    
+    for (i = 0; i < image->n_images; i++)
+    {
+        pixel* d_p;
+        loadImageToCuda(image, i, d_p);
+        apply_gray_filter_on_Cuda_kernel << <numBlock, numThread >> > (d_p, image->height[i], image->width[i]);
+        loadImageToHost(image, d_p);
+        freeDataFromCuda(d_p);
+    }
+
+}
+
+
+
+void image_filtering_Cuda(animated_gif* image) {
+
+    apply_gray_filter_on_Cuda(image);
+
+    /* Apply blur filter with convergence value */
+    apply_blur_filter(image, 5, 20);
+
+    /* Apply sobel filter on pixels */
+    apply_sobel_filter(image);
+
+
+}
+
+
+
+
+
 /*
  * Main entry point
  */
@@ -887,14 +1009,8 @@ main(int argc, char** argv)
     /* FILTER Timer start */
     gettimeofday(&t1, NULL);
 
-    /* Convert the pixels into grayscale */
-    apply_gray_filter(image);
-
-    /* Apply blur filter with convergence value */
-    apply_blur_filter(image, 5, 20);
-
-    /* Apply sobel filter on pixels */
-    apply_sobel_filter(image);
+    //filter the image using Cuda
+    image_filtering_Cuda;
 
     /* FILTER Timer stop */
     gettimeofday(&t2, NULL);
