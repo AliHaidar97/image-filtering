@@ -667,7 +667,7 @@ apply_blur_filter(animated_gif* image, int size, int threshold)
                 }
             }
 
-          
+
 
             /* Apply blur on top part of image (10%) */
             for (j = size; j < height / 10 - size; j++)
@@ -760,7 +760,7 @@ apply_blur_filter(animated_gif* image, int size, int threshold)
                 }
             }
 
-        }         while (threshold > 0 && !end);
+        } while (threshold > 0 && !end);
 
 #if SOBELF_DEBUG
         printf("BLUR: number of iterations for image %d\n", n_iter);
@@ -857,12 +857,12 @@ apply_sobel_filter(animated_gif* image)
 
 
 //load the image to GPU
-void loadImageToCuda(animated_gif* image, int index,  pixel* d_p) {
+void loadImageToCuda(animated_gif* image, int index, pixel* d_p) {
 
     //Memory allocation on cuda
     cudaMalloc((void**)&d_p,
         image->height[index] * image->width[index] * sizeof(pixel));
-   
+
     cudaMemcpy(d_p, image->pixel[index],
         image->height[index] * image->width[index] * sizeof(pixel),
         cudaMemcpyHostToDevice);
@@ -871,7 +871,7 @@ void loadImageToCuda(animated_gif* image, int index,  pixel* d_p) {
 //load the image from GPU back to CPU
 void loadImageToHost(animated_gif* image, int index, pixel* d_p) {
 
-    cudaMemcpy(image->pixel[index] , d_p,
+    cudaMemcpy(image->pixel[index], d_p,
         image->height[index] * image->width[index] * sizeof(pixel),
         cudaMemcpyDeviceToHost);
 
@@ -879,7 +879,7 @@ void loadImageToHost(animated_gif* image, int index, pixel* d_p) {
 
 
 void freeDataFromCuda(pixel* d_p) {
-    
+
     free(d_p);
 
 }
@@ -892,11 +892,11 @@ __global__ void apply_gray_filter_on_Cuda_kernel(pixel* d_p, int height, int wid
     int i;
     i = blockDim.x * blockIdx.x + threadIdx.x;
     int total = numThread * numBlock;
-    while (i < height*width) {
+    while (i < height * width) {
 
         int moy;
 
-        moy = (p[i].r + p[i].g + p[i].b) / 3;
+        moy = (d_p[i].r + d_p[i].g + d_p[i].b) / 3;
         if (moy < 0) moy = 0;
         if (moy > 255) moy = 255;
 
@@ -906,7 +906,7 @@ __global__ void apply_gray_filter_on_Cuda_kernel(pixel* d_p, int height, int wid
 
 
         i += total;
-    } 
+    }
 
 }
 
@@ -916,7 +916,7 @@ __global__ void apply_gray_filter_on_Cuda_kernel(pixel* d_p, int height, int wid
 void apply_gray_filter_on_Cuda(animated_gif* image) {
 
     int i;
-    
+
     for (i = 0; i < image->n_images; i++)
     {
         pixel* d_p;
@@ -993,26 +993,26 @@ __global__ void apply_sobel_filter_on_Cuda_kernel_first_phase(pixel* d_p, pixel*
 
 
 //applying the convolution part
-__global__ void apply_conv_on_Cuda_kernel(pixel* d_p, pixel* d_temp_p,int l1,int r1,int l2,int r2)
+__global__ void apply_conv_on_Cuda_kernel(pixel* d_p, pixel* d_temp_p, int l1, int r1, int l2, int r2)
 {
 
     int i, j, k;
     i = blockDim.x * blockIdx.x + threadIdx.x;
     int total = numThread * numBlock;
     while (1) {
-        
+
 
         j = i / (r2 - l2) + l1;
-        k = i % (r2 -l2) + l2;
+        k = i % (r2 - l2) + l2;
 
         if (j >= r1)break;
-       
+
 
         d_p[CONV(j, k, width)].r = d_temp_p[CONV(j, k, width)].r;
         d_p[CONV(j, k, width)].g = d_temp_p[CONV(j, k, width)].g;
         d_p[CONV(j, k, width)].b = d_temp_p[CONV(j, k, width)].b;
-           
-      
+
+
         i += total;
     }
 }
@@ -1031,9 +1031,9 @@ void apply_sobel_filter_on_Cuda(animated_gif* image) {
 
         loadImageToCuda(image, i, d_p);
         loadImageToCuda(image, i, d_sobel);
-        
+
         apply_sobel_filter_on_Cuda_kernel_first_phase << <numBlock, numThread >> > (d_p, d_sobel, height, width);
-        apply_conv_on_Cuda_kernel<< <numBlock, numThread >> > (d_p, d_sobel, 1, height-1, 1, width-1);
+        apply_conv_on_Cuda_kernel << <numBlock, numThread >> > (d_p, d_sobel, 1, height - 1, 1, width - 1);
 
 
         loadImageToHost(image, d_p);
@@ -1046,7 +1046,7 @@ void apply_sobel_filter_on_Cuda(animated_gif* image) {
 
 
 
-__global__ void apply_blur_filter_on_Cuda_kernel(pixel* d_p, pixel* d_new, int l1, int r1, int l2, int r2,int size,int height,int width)
+__global__ void apply_blur_filter_on_Cuda_kernel(pixel* d_p, pixel* d_new, int l1, int r1, int l2, int r2, int size, int height, int width)
 {
 
     int i, j, k;
@@ -1058,7 +1058,7 @@ __global__ void apply_blur_filter_on_Cuda_kernel(pixel* d_p, pixel* d_new, int l
         k = i % (r2 - l2) + l2;
 
         if (j >= r1)break;
-        
+
         int stencil_j, stencil_k;
         int t_r = 0;
         int t_g = 0;
@@ -1077,7 +1077,7 @@ __global__ void apply_blur_filter_on_Cuda_kernel(pixel* d_p, pixel* d_new, int l
         d_new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
         d_new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
         d_new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
-      
+
 
         i += total;
     }
@@ -1091,7 +1091,7 @@ __global__ void apply_blur_filter_on_Cuda_kernel(pixel* d_p, pixel* d_new, int l
 
 
 
-__global__ void check_blur_filter_on_Cuda_kernel(pixel* d_p, pixel* d_new,int * d_end, int l1, int r1, int l2, int r2, int size, int height, int width, int threshold)
+__global__ void check_blur_filter_on_Cuda_kernel(pixel* d_p, pixel* d_new, int* d_end, int l1, int r1, int l2, int r2, int size, int height, int width, int threshold)
 {
 
     int i, j, k;
@@ -1121,13 +1121,13 @@ __global__ void check_blur_filter_on_Cuda_kernel(pixel* d_p, pixel* d_new,int * 
             (*d_end) = 0;
 
 
-        d_p[CONV(j, k, width)].r = d_new[CONV(j, k, width)].r;
-        d_p[CONV(j, k, width)].g = d_new[CONV(j, k, width)].g;
-        d_p[CONV(j, k, width)].b = d_new[CONV(j, k, width)].b;
+            d_p[CONV(j, k, width)].r = d_new[CONV(j, k, width)].r;
+            d_p[CONV(j, k, width)].g = d_new[CONV(j, k, width)].g;
+            d_p[CONV(j, k, width)].b = d_new[CONV(j, k, width)].b;
 
-        i += total;
+            i += total;
+        }
     }
-}
 
 
 
@@ -1135,80 +1135,80 @@ __global__ void check_blur_filter_on_Cuda_kernel(pixel* d_p, pixel* d_new,int * 
 
 
 
-void apply_blur_filter_on_Cuda(animated_gif* image, int size, int threshold) {
+    void apply_blur_filter_on_Cuda(animated_gif * image, int size, int threshold) {
 
 
-    int i, j, k;
-    int width, height;
-    int* end = (int*)malloc(1 * sizeof(int));
-    
-    int n_iter = 0;
-    pixel* d_p, d_new;
-    int* d_end;
-    cudaMalloc((void**)&d_end,
-        1* sizeof(int));
+        int i, j, k;
+        int width, height;
+        int* end = (int*)malloc(1 * sizeof(int));
 
-    
-
-    for (i = 0; i < image->n_images; i++)
-    {
-        n_iter = 0;
-        (*end) = 1;
-        width = image->width[i];
-        height = image->height[i];
-        
-        
-
-        
-        /* Allocate array of new pixels */
-        loadImageToCuda(image, i, d_p);
-        loadImageToCuda(image, i, d_new);
+        int n_iter = 0;
+        pixel* d_p, d_new;
+        int* d_end;
+        cudaMalloc((void**)&d_end,
+            1 * sizeof(int));
 
 
-        /* Perform at least one blur iteration */
-        do
+
+        for (i = 0; i < image->n_images; i++)
         {
+            n_iter = 0;
             (*end) = 1;
-            cudaMemcpy(d_end, end,
-                1 * sizeof(int),
-                cudaMemcpyHostToDevice);
-            n_iter++;
+            width = image->width[i];
+            height = image->height[i];
 
-            apply_conv_on_Cuda_kernel << <numBlock, numThread >> > (d_new, d_p, 0, width - 1, 0, height - 1);
 
-            /* Apply blur on top part of image (10%) */
-            apply_blur_filter_on_Cuda_kernel << <numBlock, numThread >> > (d_p, d_new, size, height / 10, size, width - size, size, height, width);
-        
 
-            /* Copy the middle part of the image */
-            apply_conv_on_Cuda_kernel << <numBlock, numThread >> > (d_new, d_p, height / 10, height * 0.9 + size, size, width - size);
-            
 
-            /* Apply blur on the bottom part of the image (10%) */
-            apply_blur_filter_on_Cuda_kernel << <numBlock, numThread >> > (d_p, d_new, height * 0.9 + size, height - size, size, width - size, size, height, width);
-          
-            /*Check blur filter*/
-            check_blur_filter_on_Cuda_kernel << <numBlock, numThread >> > (d_p, d_new, d_end, 1, height - 1, 1, width, size, height, width, threshold);
-            
-            cudaMemcpy(end, d_end,
-                1 * sizeof(int),
-                cudaMemcpyDeviceToHost);
+            /* Allocate array of new pixels */
+            loadImageToCuda(image, i, d_p);
+            loadImageToCuda(image, i, d_new);
 
-        } while (threshold > 0 && !(*end));
+
+            /* Perform at least one blur iteration */
+            do
+            {
+                (*end) = 1;
+                cudaMemcpy(d_end, end,
+                    1 * sizeof(int),
+                    cudaMemcpyHostToDevice);
+                n_iter++;
+
+                apply_conv_on_Cuda_kernel << <numBlock, numThread >> > (d_new, d_p, 0, width - 1, 0, height - 1);
+
+                /* Apply blur on top part of image (10%) */
+                apply_blur_filter_on_Cuda_kernel << <numBlock, numThread >> > (d_p, d_new, size, height / 10, size, width - size, size, height, width);
+
+
+                /* Copy the middle part of the image */
+                apply_conv_on_Cuda_kernel << <numBlock, numThread >> > (d_new, d_p, height / 10, height * 0.9 + size, size, width - size);
+
+
+                /* Apply blur on the bottom part of the image (10%) */
+                apply_blur_filter_on_Cuda_kernel << <numBlock, numThread >> > (d_p, d_new, height * 0.9 + size, height - size, size, width - size, size, height, width);
+
+                /*Check blur filter*/
+                check_blur_filter_on_Cuda_kernel << <numBlock, numThread >> > (d_p, d_new, d_end, 1, height - 1, 1, width, size, height, width, threshold);
+
+                cudaMemcpy(end, d_end,
+                    1 * sizeof(int),
+                    cudaMemcpyDeviceToHost);
+
+            } while (threshold > 0 && !(*end));
 
 #if SOBELF_DEBUG
-        printf("BLUR: number of iterations for image %d\n", n_iter);
+            printf("BLUR: number of iterations for image %d\n", n_iter);
 #endif
 
-        loadImageToHost(image, d_p);
-        freeDataFromCuda(d_p);
-        freeDataFromCuda(d_sobel);
-        
+            loadImageToHost(image, d_p);
+            freeDataFromCuda(d_p);
+            freeDataFromCuda(d_sobel);
+
+        }
+        free(d_end);
+        free(end);
+
     }
-    free(d_end);
-    free(end);
-
-}
 
 
 
@@ -1218,94 +1218,94 @@ void apply_blur_filter_on_Cuda(animated_gif* image, int size, int threshold) {
 
 
 
-void image_filtering_Cuda(animated_gif* image) {
-    
-    /*Apply gray filter on pixels*/
-    apply_gray_filter_on_Cuda(image);
+    void image_filtering_Cuda(animated_gif * image) {
 
-
-    
-    ///* Apply blur filter with convergence value */
-    //apply_blur_filter_on_Cuda(image, 5, 20);
-
-    ///* Apply sobel filter on pixels */
-    //apply_sobel_filter_on_Cuda(image);
-
-     
-    apply_blur_filter(image, 5, 20);
-
-   
-    apply_sobel_filter(image);
-    
-
-}
+        /*Apply gray filter on pixels*/
+        apply_gray_filter(image);
 
 
 
+        ///* Apply blur filter with convergence value */
+        //apply_blur_filter_on_Cuda(image, 5, 20);
+
+        ///* Apply sobel filter on pixels */
+        //apply_sobel_filter_on_Cuda(image);
 
 
-/*
- * Main entry point
- */
-int
-main(int argc, char** argv)
-{
-    char* input_filename;
-    char* output_filename;
-    animated_gif* image;
-    struct timeval t1, t2;
-    double duration;
+        apply_blur_filter(image, 5, 20);
 
-    /* Check command-line arguments */
-    if (argc < 3)
+
+        apply_sobel_filter(image);
+
+
+    }
+
+
+
+
+
+    /*
+     * Main entry point
+     */
+    int
+        main(int argc, char** argv)
     {
-        fprintf(stderr, "Usage: %s input.gif output.gif \n", argv[0]);
-        return 1;
+        char* input_filename;
+        char* output_filename;
+        animated_gif* image;
+        struct timeval t1, t2;
+        double duration;
+
+        /* Check command-line arguments */
+        if (argc < 3)
+        {
+            fprintf(stderr, "Usage: %s input.gif output.gif \n", argv[0]);
+            return 1;
+        }
+
+        input_filename = argv[1];
+        output_filename = argv[2];
+
+        /* IMPORT Timer start */
+        gettimeofday(&t1, NULL);
+
+        /* Load file and store the pixels in array */
+        image = load_pixels(input_filename);
+        if (image == NULL) { return 1; }
+
+        /* IMPORT Timer stop */
+        gettimeofday(&t2, NULL);
+
+        duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
+
+        printf("GIF loaded from file %s with %d image(s) in %lf s\n",
+            input_filename, image->n_images, duration);
+
+        /* FILTER Timer start */
+        gettimeofday(&t1, NULL);
+
+        //filter the image using Cuda
+        image_filtering_Cuda(image);
+
+        /* FILTER Timer stop */
+        gettimeofday(&t2, NULL);
+
+        duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
+
+        printf("SOBEL done in %lf s\n", duration);
+
+        /* EXPORT Timer start */
+        gettimeofday(&t1, NULL);
+
+        /* Store file from array of pixels to GIF file */
+        if (!store_pixels(output_filename, image)) { return 1; }
+
+        /* EXPORT Timer stop */
+        gettimeofday(&t2, NULL);
+
+        duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
+
+        printf("Export done in %lf s in file %s\n", duration, output_filename);
+
+        return 0;
     }
-
-    input_filename = argv[1];
-    output_filename = argv[2];
-
-    /* IMPORT Timer start */
-    gettimeofday(&t1, NULL);
-
-    /* Load file and store the pixels in array */
-    image = load_pixels(input_filename);
-    if (image == NULL) { return 1; }
-
-    /* IMPORT Timer stop */
-    gettimeofday(&t2, NULL);
-
-    duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
-
-    printf("GIF loaded from file %s with %d image(s) in %lf s\n",
-        input_filename, image->n_images, duration);
-
-    /* FILTER Timer start */
-    gettimeofday(&t1, NULL);
-
-    //filter the image using Cuda
-    image_filtering_Cuda(image);
-
-    /* FILTER Timer stop */
-    gettimeofday(&t2, NULL);
-
-    duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
-
-    printf("SOBEL done in %lf s\n", duration);
-
-    /* EXPORT Timer start */
-    gettimeofday(&t1, NULL);
-
-    /* Store file from array of pixels to GIF file */
-    if (!store_pixels(output_filename, image)) { return 1; }
-
-    /* EXPORT Timer stop */
-    gettimeofday(&t2, NULL);
-
-    duration = (t2.tv_sec - t1.tv_sec) + ((t2.tv_usec - t1.tv_usec) / 1e6);
-
-    printf("Export done in %lf s in file %s\n", duration, output_filename);
-
-    return 0;
-}
