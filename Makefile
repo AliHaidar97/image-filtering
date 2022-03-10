@@ -32,11 +32,13 @@ $(OBJ_DIR):
 	mkdir $(OBJ_DIR)
 
 
-$(OBJ_DIR)/%.o : $(SRC_DIR)/%.cu
-	$(CC) $(CFLAGS) -c -o $@ $^
 
 $(OBJ_DIR)/%.o : $(SRC_DIR)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $^
+
+$(OBJ_DIR)/%.o : $(SRC_DIR)/%.cu
+	$(CC) $(CFLAGS) -c -o $@ $^
+
  
 
 
