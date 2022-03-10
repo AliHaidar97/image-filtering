@@ -1223,12 +1223,20 @@ void image_filtering_Cuda(animated_gif* image) {
     /*Apply gray filter on pixels*/
     apply_gray_filter_on_Cuda(image);
 
-    /* Apply blur filter with convergence value */
-    apply_blur_filter_on_Cuda(image, 5, 20);
 
-    /* Apply sobel filter on pixels */
-    apply_sobel_filter_on_Cuda(image);
+    
+    ///* Apply blur filter with convergence value */
+    //apply_blur_filter_on_Cuda(image, 5, 20);
 
+    ///* Apply sobel filter on pixels */
+    //apply_sobel_filter_on_Cuda(image);
+
+     
+    apply_blur_filter(image, 5, 20);
+
+   
+    apply_sobel_filter(image);
+    
 
 }
 
