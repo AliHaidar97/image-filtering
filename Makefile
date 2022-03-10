@@ -2,7 +2,7 @@ SRC_DIR=src
 HEADER_DIR=include
 OBJ_DIR=obj
 
-CC=gcc
+CC=nvcc
 CFLAGS=-O3 -I$(HEADER_DIR)
 LDFLAGS=-lm
 
@@ -12,7 +12,7 @@ SRC= dgif_lib.c \
 	gif_font.c \
 	gif_hash.c \
 	gifalloc.c \
-	main.c \
+	main.cu \
 	openbsd-reallocarray.c \
 	quantize.c
 
@@ -31,11 +31,18 @@ all: $(OBJ_DIR) sobelf
 $(OBJ_DIR):
 	mkdir $(OBJ_DIR)
 
+
+$(OBJ_DIR)/%.o : $(SRC_DIR)/%.cu
+	$(CC) $(CFLAGS) -c -o $@ $^
+
 $(OBJ_DIR)/%.o : $(SRC_DIR)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $^
+ 
+
 
 sobelf:$(OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
 	rm -f sobelf $(OBJ)
+
