@@ -667,6 +667,8 @@ apply_blur_filter(animated_gif* image, int size, int threshold)
                 }
             }
 
+          
+
             /* Apply blur on top part of image (10%) */
             for (j = size; j < height / 10 - size; j++)
             {
@@ -890,7 +892,7 @@ __global__ void apply_gray_filter_on_Cuda_kernel(pixel* d_p, int height, int wid
     int i;
     i = blockDim.x * blockIdx.x + threadIdx.x;
     int total = numThread * numBlock;
-    while (i < length) {
+    while (i < height*width) {
 
         int moy;
 
@@ -908,30 +910,6 @@ __global__ void apply_gray_filter_on_Cuda_kernel(pixel* d_p, int height, int wid
 
 }
 
-void
-apply_gray_filter(animated_gif* image)
-{
-    int i, j;
-    pixel** p;
-
-    p = image->p;
-
-    for (i = 0; i < image->n_images; i++)
-    {
-        for (j = 0; j < image->width[i] * image->height[i]; j++)
-        {
-            int moy;
-
-            moy = (p[i][j].r + p[i][j].g + p[i][j].b) / 3;
-            if (moy < 0) moy = 0;
-            if (moy > 255) moy = 255;
-
-            p[i][j].r = moy;
-            p[i][j].g = moy;
-            p[i][j].b = moy;
-        }
-    }
-}
 
 
 
@@ -952,15 +930,304 @@ void apply_gray_filter_on_Cuda(animated_gif* image) {
 
 
 
-void image_filtering_Cuda(animated_gif* image) {
 
+
+
+__global__ void apply_sobel_filter_on_Cuda_kernel_first_phase(pixel* d_p, pixel* d_sobel, int height, int width)
+{
+
+    int i, j, k;
+    i = blockDim.x * blockIdx.x + threadIdx.x;
+    int total = numThread * numBlock;
+    while (1) {
+
+        j = i / (width - 1) + 1;
+        k = i % (width - 1) + 1;
+
+        if (j >= height - 1)break;
+        if (k >= width - 1)break;
+
+
+        int pixel_blue_no, pixel_blue_n, pixel_blue_ne;
+        int pixel_blue_so, pixel_blue_s, pixel_blue_se;
+        int pixel_blue_o, pixel_blue, pixel_blue_e;
+
+        float deltaX_blue;
+        float deltaY_blue;
+        float val_blue;
+
+        pixel_blue_no = d_p[CONV(j - 1, k - 1, width)].b;
+        pixel_blue_n = d_p[CONV(j - 1, k, width)].b;
+        pixel_blue_ne = d_p[CONV(j - 1, k + 1, width)].b;
+        pixel_blue_so = d_p[CONV(j + 1, k - 1, width)].b;
+        pixel_blue_s = d_p[CONV(j + 1, k, width)].b;
+        pixel_blue_se = d_p[CONV(j + 1, k + 1, width)].b;
+        pixel_blue_o = d_p[CONV(j, k - 1, width)].b;
+        pixel_blue = d_p[CONV(j, k, width)].b;
+        pixel_blue_e = d_p[CONV(j, k + 1, width)].b;
+
+        deltaX_blue = -pixel_blue_no + pixel_blue_ne - 2 * pixel_blue_o + 2 * pixel_blue_e - pixel_blue_so + pixel_blue_se;
+
+        deltaY_blue = pixel_blue_se + 2 * pixel_blue_s + pixel_blue_so - pixel_blue_ne - 2 * pixel_blue_n - pixel_blue_no;
+
+        val_blue = sqrt(deltaX_blue * deltaX_blue + deltaY_blue * deltaY_blue) / 4;
+
+
+        if (val_blue > 50)
+        {
+            d_sobel[CONV(j, k, width)].r = 255;
+            d_sobel[CONV(j, k, width)].g = 255;
+            d_sobel[CONV(j, k, width)].b = 255;
+        }
+        else
+        {
+            d_sobel[CONV(j, k, width)].r = 0;
+            d_sobel[CONV(j, k, width)].g = 0;
+            d_sobel[CONV(j, k, width)].b = 0;
+
+        }
+        i += total;
+    }
+}
+
+
+
+//applying the convolution part
+__global__ void apply_conv_on_Cuda_kernel(pixel* d_p, pixel* d_temp_p,int l1,int r1,int l2,int r2)
+{
+
+    int i, j, k;
+    i = blockDim.x * blockIdx.x + threadIdx.x;
+    int total = numThread * numBlock;
+    while (1) {
+        
+
+        j = i / (r2 - l2) + l1;
+        k = i % (r2 -l2) + l2;
+
+        if (j >= r1)break;
+       
+
+        d_p[CONV(j, k, width)].r = d_temp_p[CONV(j, k, width)].r;
+        d_p[CONV(j, k, width)].g = d_temp_p[CONV(j, k, width)].g;
+        d_p[CONV(j, k, width)].b = d_temp_p[CONV(j, k, width)].b;
+           
+      
+        i += total;
+    }
+}
+
+
+
+void apply_sobel_filter_on_Cuda(animated_gif* image) {
+
+    int i;
+    pixel* d_p, d_sobel;
+    int height, width;
+    for (i = 0; i < image->n_images; i++)
+    {
+        width = image->width[i];
+        height = image->height[i];
+
+        loadImageToCuda(image, i, d_p);
+        loadImageToCuda(image, i, d_sobel);
+        
+        apply_sobel_filter_on_Cuda_kernel_first_phase << <numBlock, numThread >> > (d_p, d_sobel, height, width);
+        apply_conv_on_Cuda_kernel<< <numBlock, numThread >> > (d_p, d_sobel, 1, height-1, 1, width-1);
+
+
+        loadImageToHost(image, d_p);
+        freeDataFromCuda(d_p);
+        freeDataFromCuda(d_sobel);
+    }
+
+
+}
+
+
+
+__global__ void apply_blur_filter_on_Cuda_kernel(pixel* d_p, pixel* d_new, int l1, int r1, int l2, int r2,int size,int height,int width)
+{
+
+    int i, j, k;
+    i = blockDim.x * blockIdx.x + threadIdx.x;
+    int total = numThread * numBlock;
+    while (1) {
+
+        j = i / (r2 - l2) + l1;
+        k = i % (r2 - l2) + l2;
+
+        if (j >= r1)break;
+        
+        int stencil_j, stencil_k;
+        int t_r = 0;
+        int t_g = 0;
+        int t_b = 0;
+
+        for (stencil_j = -size; stencil_j <= size; stencil_j++)
+        {
+            for (stencil_k = -size; stencil_k <= size; stencil_k++)
+            {
+                t_r += d_p[CONV(j + stencil_j, k + stencil_k, width)].r;
+                t_g += d_p[CONV(j + stencil_j, k + stencil_k, width)].g;
+                t_b += d_p][CONV(j + stencil_j, k + stencil_k, width)].b;
+            }
+        }
+
+        d_new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
+        d_new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
+        d_new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
+      
+
+        i += total;
+    }
+}
+
+
+
+
+
+
+
+
+
+__global__ void check_blur_filter_on_Cuda_kernel(pixel* d_p, pixel* d_new,int * d_end, int l1, int r1, int l2, int r2, int size, int height, int width, int threshold)
+{
+
+    int i, j, k;
+    i = blockDim.x * blockIdx.x + threadIdx.x;
+    int total = numThread * numBlock;
+    while (1) {
+
+        j = i / (r2 - l2) + l1;
+        k = i % (r2 - l2) + l2;
+
+        if (j >= r1)break;
+
+        float diff_r;
+        float diff_g;
+        float diff_b;
+
+        diff_r = (d_new[CONV(j, k, width)].r - d_p[CONV(j, k, width)].r);
+        diff_g = (d_new[CONV(j, k, width)].g - d_p[CONV(j, k, width)].g);
+        diff_b = (d_new[CONV(j, k, width)].b - d_p[CONV(j, k, width)].b);
+
+        if (diff_r > threshold || -diff_r > threshold
+            ||
+            diff_g > threshold || -diff_g > threshold
+            ||
+            diff_b > threshold || -diff_b > threshold
+            ) {
+            (*d_end) = 0;
+
+
+        d_p[CONV(j, k, width)].r = d_new[CONV(j, k, width)].r;
+        d_p[CONV(j, k, width)].g = d_new[CONV(j, k, width)].g;
+        d_p[CONV(j, k, width)].b = d_new[CONV(j, k, width)].b;
+
+        i += total;
+    }
+}
+
+
+
+
+
+
+
+void apply_blur_filter_on_Cuda(animated_gif* image, int size, int threshold) {
+
+
+    int i, j, k;
+    int width, height;
+    int* end = (int*)malloc(1 * sizeof(int));
+    
+    int n_iter = 0;
+    pixel* d_p, d_new;
+    int* d_end;
+    cudaMalloc((void**)&d_end,
+        1* sizeof(int));
+
+    
+
+    for (i = 0; i < image->n_images; i++)
+    {
+        n_iter = 0;
+        (*end) = 1;
+        width = image->width[i];
+        height = image->height[i];
+        
+        
+
+        
+        /* Allocate array of new pixels */
+        loadImageToCuda(image, i, d_p);
+        loadImageToCuda(image, i, d_new);
+
+
+        /* Perform at least one blur iteration */
+        do
+        {
+            (*end) = 1;
+            cudaMemcpy(d_end, end,
+                1 * sizeof(int),
+                cudaMemcpyHostToDevice);
+            n_iter++;
+
+            apply_conv_on_Cuda_kernel << <numBlock, numThread >> > (d_new, d_p, 0, width - 1, 0, height - 1);
+
+            /* Apply blur on top part of image (10%) */
+            apply_blur_filter_on_Cuda_kernel << <numBlock, numThread >> > (d_p, d_new, size, height / 10, size, width - size, size, height, width);
+        
+
+            /* Copy the middle part of the image */
+            apply_conv_on_Cuda_kernel << <numBlock, numThread >> > (d_new, d_p, height / 10, height * 0.9 + size, size, width - size);
+            
+
+            /* Apply blur on the bottom part of the image (10%) */
+            apply_blur_filter_on_Cuda_kernel << <numBlock, numThread >> > (d_p, d_new, height * 0.9 + size, height - size, size, width - size, size, height, width);
+          
+            /*Check blur filter*/
+            check_blur_filter_on_Cuda_kernel << <numBlock, numThread >> > (d_p, d_new, d_end, 1, height - 1, 1, width, size, height, width, threshold);
+            
+            cudaMemcpy(end, d_end,
+                1 * sizeof(int),
+                cudaMemcpyDeviceToHost);
+
+        } while (threshold > 0 && !(*end));
+
+#if SOBELF_DEBUG
+        printf("BLUR: number of iterations for image %d\n", n_iter);
+#endif
+
+        loadImageToHost(image, d_p);
+        freeDataFromCuda(d_p);
+        freeDataFromCuda(d_sobel);
+        
+    }
+    free(d_end);
+    free(end);
+
+}
+
+
+
+
+
+
+
+
+
+void image_filtering_Cuda(animated_gif* image) {
+    
+    /*Apply gray filter on pixels*/
     apply_gray_filter_on_Cuda(image);
 
     /* Apply blur filter with convergence value */
-    apply_blur_filter(image, 5, 20);
+    apply_blur_filter_on_Cuda(image, 5, 20);
 
     /* Apply sobel filter on pixels */
-    apply_sobel_filter(image);
+    apply_sobel_filter_on_Cuda(image);
 
 
 }
@@ -1010,7 +1277,7 @@ main(int argc, char** argv)
     gettimeofday(&t1, NULL);
 
     //filter the image using Cuda
-    image_filtering_Cuda;
+    image_filtering_Cuda(image);
 
     /* FILTER Timer stop */
     gettimeofday(&t2, NULL);
