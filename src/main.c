@@ -519,7 +519,7 @@ void client()
         apply_filter_cuda(p, width, height, position, blur_size, blur_threshold);
 
         /* Apply sobel filter on pixels */
-        apply_sobel_filter_img(p, width, height);
+        //apply_sobel_filter_img(p, width, height);
 
         pgrey *send_p = p;
         int send_height = height;

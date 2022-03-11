@@ -27,16 +27,17 @@ __global__ void apply_blur_filter_kernel(pgrey *p, int delta_p, pgrey *temp, int
         i += delta;
     }
     __threadfence();
-    
+
     i = first_i;
     while (i < taille)
     {
         int k = i % width;
         int j = i / width;
 
-        if(j >=  height - size)
+        if (j >= height - size)
             break;
-        if(k < size || k >= width - size || j < size){
+        if (k < size || k >= width - size || j < size)
+        {
             i += delta;
             continue;
         }
@@ -58,13 +59,13 @@ __global__ void apply_blur_filter_kernel(pgrey *p, int delta_p, pgrey *temp, int
     }
 
     __threadfence();
-    
 
     i = first_i;
     while (i < taille)
     {
         int diff = p[i] - temp[i];
-        if(diff > threshold || diff < -threshold){
+        if (diff > threshold || diff < -threshold)
+        {
             is_blur_done = 0;
         }
         p[i] = temp[i];
@@ -72,16 +73,88 @@ __global__ void apply_blur_filter_kernel(pgrey *p, int delta_p, pgrey *temp, int
     }
 }
 
+__global__ void apply_sobel_filter_kernel(pgrey *p, pgrey *sobel, int width, int height)
+{
+
+    int first_i = blockIdx.x * blockDim.x + threadIdx.x;
+    int taille = width * height;
+    int delta = gridDim.x * blockDim.x;
+
+    int i = first_i;
+
+    while (i < taille)
+    {
+        int j = i / width;
+        int k = i % width;
+
+        if (j == 0 || j == height - 1 || k == 0 || k == width - 1){
+            i += delta;
+            continue;
+        }
+
+        int pixel_blue_no, pixel_blue_n, pixel_blue_ne;
+        int pixel_blue_so, pixel_blue_s, pixel_blue_se;
+        int pixel_blue_o, pixel_blue, pixel_blue_e;
+
+        float deltaX_blue;
+        float deltaY_blue;
+        float val_blue;
+
+        pixel_blue_no = p[CONV(j - 1, k - 1, width)];
+        pixel_blue_n = p[CONV(j - 1, k, width)];
+        pixel_blue_ne = p[CONV(j - 1, k + 1, width)];
+        pixel_blue_so = p[CONV(j + 1, k - 1, width)];
+        pixel_blue_s = p[CONV(j + 1, k, width)];
+        pixel_blue_se = p[CONV(j + 1, k + 1, width)];
+        pixel_blue_o = p[CONV(j, k - 1, width)];
+        pixel_blue = p[CONV(j, k, width)];
+        pixel_blue_e = p[CONV(j, k + 1, width)];
+
+        deltaX_blue = -pixel_blue_no + pixel_blue_ne - 2 * pixel_blue_o + 2 * pixel_blue_e - pixel_blue_so + pixel_blue_se;
+
+        deltaY_blue = pixel_blue_se + 2 * pixel_blue_s + pixel_blue_so - pixel_blue_ne - 2 * pixel_blue_n - pixel_blue_no;
+
+        val_blue = sqrt(deltaX_blue * deltaX_blue + deltaY_blue * deltaY_blue) / 4;
+
+        if (val_blue > 50)
+        {
+            sobel[CONV(j, k, width)] = 255;
+        }
+        else
+        {
+            sobel[CONV(j, k, width)] = 0;
+        }
+        i += delta;
+    }
+
+    __threadfence();
+
+    i = first_i;
+    while (i < taille)
+    {
+        int j = i / width;
+        int k = i % width;
+
+        if (j == 0 || j == height - 1 || k == 0 || k == width - 1){
+            i += delta;
+            continue;
+        }
+
+        p[i] = sobel[i];
+        i += delta;
+    }
+}
+
 void apply_filter_cuda(pgrey *p, int width, int height, int position, int size, int threshold)
 {
-    if(position == 0)return;
     pgrey *d_p, *d_temp;
     cudaMalloc((void **)&d_p, width * height * sizeof(pgrey));
     cudaMemcpy(d_p, p, width * height * sizeof(pgrey), cudaMemcpyHostToDevice);
 
     cudaMalloc((void **)&d_temp, width * height * sizeof(pgrey));
 
-    if(position != 0){
+    if (position != 0)
+    {
         // we need to blur this part
         int done;
         int n_iter = 0;
@@ -90,15 +163,18 @@ void apply_filter_cuda(pgrey *p, int width, int height, int position, int size, 
             done = 1;
             cudaMemcpyToSymbol(is_blur_done, &done, sizeof(int));
             int delta_p = 0;
-            int blur_height = height-1;
-            if(position == 2){
+            int blur_height = height - 1;
+            if (position == 2)
+            {
                 delta_p = width;
             }
-            apply_blur_filter_kernel<<<numBlocks,threadsPerBlock>>>(d_p, delta_p, d_temp, width, blur_height, size, threshold);
+            apply_blur_filter_kernel<<<numBlocks, threadsPerBlock>>>(d_p, delta_p, d_temp, width, blur_height, size, threshold);
             cudaMemcpyFromSymbol(&done, is_blur_done, sizeof(int));
             n_iter++;
         } while (!done);
     }
+
+    apply_sobel_filter_kernel<<<numBlocks, threadsPerBlock>>>(d_p, d_temp, width, height);
 
     cudaMemcpy(p, d_p, width * height * sizeof(pgrey), cudaMemcpyDeviceToHost);
 
