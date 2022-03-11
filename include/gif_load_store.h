@@ -17,13 +17,16 @@ typedef struct pixel
     int b; /* Blue */
 } pixel;
 
+// a grey pixel is just an int
+typedef int pgrey;
+
 /* Represent one GIF image (animated or not */
 typedef struct animated_gif
 {
     int n_images;   /* Number of images */
     int *width;     /* Width of each image */
     int *height;    /* Height of each image */
-    pixel **p;      /* Pixels of each image */
+    pgrey **p;      /* Pixels of each image */
     GifFileType *g; /* Internal representation.
                        DO NOT MODIFY */
 } animated_gif;

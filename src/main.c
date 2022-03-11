@@ -17,6 +17,7 @@
 // minimum number of nodes to switch from a even distribution approach to a server-client approach
 #define MIN_NODES_SERVER_CLIENT 5
 
+/*
 void apply_gray_filter_img(pixel *p, int width, int height)
 {
     int j;
@@ -49,23 +50,24 @@ void apply_gray_filter(pixel **p, int n_images, int *widths, int *heights)
         apply_gray_filter_img(p[i], widths[i], heights[i]);
     }
 }
+*/
 
 #define CONV(l, c, nb_c) \
     (l) * (nb_c) + (c)
 
-void apply_blur_filter_img(pixel *p, int width, int height, int size, int threshold)
+void apply_blur_filter_img(pgrey *p, int width, int height, int size, int threshold)
 {
     int end = 0;
     int n_iter = 0;
 
     int j, k;
 
-    pixel *new;
+    pgrey *new;
 
     n_iter = 0;
 
     /* Allocate array of new pixels */
-    new = (pixel *)malloc(width * height * sizeof(pixel));
+    new = (pgrey *)malloc(width * height * sizeof(pgrey));
 
     /* Perform at least one blur iteration */
     do
@@ -76,13 +78,11 @@ void apply_blur_filter_img(pixel *p, int width, int height, int size, int thresh
 #pragma omp parallel
         {
 #pragma omp for schedule(dynamic) collapse(2)
-            for (j = 0; j < height - 1; j++)
+            for (j = 0; j < height; j++)
             {
-                for (k = 0; k < width - 1; k++)
+                for (k = 0; k < width; k++)
                 {
-                    new[CONV(j, k, width)].r = p[CONV(j, k, width)].r;
-                    new[CONV(j, k, width)].g = p[CONV(j, k, width)].g;
-                    new[CONV(j, k, width)].b = p[CONV(j, k, width)].b;
+                    new[CONV(j, k, width)] = p[CONV(j, k, width)];
                 }
             }
         }
@@ -97,23 +97,17 @@ void apply_blur_filter_img(pixel *p, int width, int height, int size, int thresh
                 for (k = size; k < width - size; k++)
                 {
                     int stencil_j, stencil_k;
-                    int t_r = 0;
-                    int t_g = 0;
-                    int t_b = 0;
+                    int t = 0;
 
                     for (stencil_j = -size; stencil_j <= size; stencil_j++)
                     {
                         for (stencil_k = -size; stencil_k <= size; stencil_k++)
                         {
-                            t_r += p[CONV(j + stencil_j, k + stencil_k, width)].r;
-                            t_g += p[CONV(j + stencil_j, k + stencil_k, width)].g;
-                            t_b += p[CONV(j + stencil_j, k + stencil_k, width)].b;
+                            t += p[CONV(j + stencil_j, k + stencil_k, width)];
                         }
                     }
 
-                    new[CONV(j, k, width)].r = t_r / ((2 * size + 1) * (2 * size + 1));
-                    new[CONV(j, k, width)].g = t_g / ((2 * size + 1) * (2 * size + 1));
-                    new[CONV(j, k, width)].b = t_b / ((2 * size + 1) * (2 * size + 1));
+                    new[CONV(j, k, width)] = t / ((2 * size + 1) * (2 * size + 1));
                 }
             }
         }
@@ -126,24 +120,16 @@ void apply_blur_filter_img(pixel *p, int width, int height, int size, int thresh
                 for (k = 1; k < width - 1; k++)
                 {
 
-                    float diff_r;
-                    float diff_g;
-                    float diff_b;
+                    float diff;
 
-                    diff_r = (new[CONV(j, k, width)].r - p[CONV(j, k, width)].r);
-                    diff_g = (new[CONV(j, k, width)].g - p[CONV(j, k, width)].g);
-                    diff_b = (new[CONV(j, k, width)].b - p[CONV(j, k, width)].b);
+                    diff = (new[CONV(j, k, width)] - p[CONV(j, k, width)]);
 
-                    if (diff_r > threshold || -diff_r > threshold ||
-                        diff_g > threshold || -diff_g > threshold ||
-                        diff_b > threshold || -diff_b > threshold)
+                    if (diff > threshold || -diff > threshold)
                     {
                         end = 0;
                     }
 
-                    p[CONV(j, k, width)].r = new[CONV(j, k, width)].r;
-                    p[CONV(j, k, width)].g = new[CONV(j, k, width)].g;
-                    p[CONV(j, k, width)].b = new[CONV(j, k, width)].b;
+                    p[CONV(j, k, width)] = new[CONV(j, k, width)];
                 }
             }
         }
@@ -156,7 +142,7 @@ void apply_blur_filter_img(pixel *p, int width, int height, int size, int thresh
     free(new);
 }
 
-void apply_blur_filter(pixel **p, int n_images, int *widths, int *heights, int size, int threshold)
+void apply_blur_filter(pgrey **p, int n_images, int *widths, int *heights, int size, int threshold)
 {
     int i;
     /* Process all images */
@@ -172,13 +158,13 @@ void apply_blur_filter(pixel **p, int n_images, int *widths, int *heights, int s
     }
 }
 
-void apply_sobel_filter_img(pixel *p, int width, int height)
+void apply_sobel_filter_img(pgrey *p, int width, int height)
 {
 
     int j, k;
-    pixel *sobel;
+    pgrey *sobel;
 
-    sobel = (pixel *)malloc(width * height * sizeof(pixel));
+    sobel = (pgrey *)malloc(width * height * sizeof(pgrey));
 
 #pragma omp parallel
     {
@@ -195,15 +181,15 @@ void apply_sobel_filter_img(pixel *p, int width, int height)
                 float deltaY_blue;
                 float val_blue;
 
-                pixel_blue_no = p[CONV(j - 1, k - 1, width)].b;
-                pixel_blue_n = p[CONV(j - 1, k, width)].b;
-                pixel_blue_ne = p[CONV(j - 1, k + 1, width)].b;
-                pixel_blue_so = p[CONV(j + 1, k - 1, width)].b;
-                pixel_blue_s = p[CONV(j + 1, k, width)].b;
-                pixel_blue_se = p[CONV(j + 1, k + 1, width)].b;
-                pixel_blue_o = p[CONV(j, k - 1, width)].b;
-                pixel_blue = p[CONV(j, k, width)].b;
-                pixel_blue_e = p[CONV(j, k + 1, width)].b;
+                pixel_blue_no = p[CONV(j - 1, k - 1, width)];
+                pixel_blue_n = p[CONV(j - 1, k, width)];
+                pixel_blue_ne = p[CONV(j - 1, k + 1, width)];
+                pixel_blue_so = p[CONV(j + 1, k - 1, width)];
+                pixel_blue_s = p[CONV(j + 1, k, width)];
+                pixel_blue_se = p[CONV(j + 1, k + 1, width)];
+                pixel_blue_o = p[CONV(j, k - 1, width)];
+                pixel_blue = p[CONV(j, k, width)];
+                pixel_blue_e = p[CONV(j, k + 1, width)];
 
                 deltaX_blue = -pixel_blue_no + pixel_blue_ne - 2 * pixel_blue_o + 2 * pixel_blue_e - pixel_blue_so + pixel_blue_se;
 
@@ -213,15 +199,11 @@ void apply_sobel_filter_img(pixel *p, int width, int height)
 
                 if (val_blue > 50)
                 {
-                    sobel[CONV(j, k, width)].r = 255;
-                    sobel[CONV(j, k, width)].g = 255;
-                    sobel[CONV(j, k, width)].b = 255;
+                    sobel[CONV(j, k, width)] = 255;
                 }
                 else
                 {
-                    sobel[CONV(j, k, width)].r = 0;
-                    sobel[CONV(j, k, width)].g = 0;
-                    sobel[CONV(j, k, width)].b = 0;
+                    sobel[CONV(j, k, width)] = 0;
                 }
             }
         }
@@ -234,16 +216,14 @@ void apply_sobel_filter_img(pixel *p, int width, int height)
         {
             for (k = 1; k < width - 1; k++)
             {
-                p[CONV(j, k, width)].r = sobel[CONV(j, k, width)].r;
-                p[CONV(j, k, width)].g = sobel[CONV(j, k, width)].g;
-                p[CONV(j, k, width)].b = sobel[CONV(j, k, width)].b;
+                p[CONV(j, k, width)] = sobel[CONV(j, k, width)];
             }
         }
     }
     free(sobel);
 }
 
-void apply_sobel_filter(pixel **p, int n_images, int *widths, int *heights)
+void apply_sobel_filter(pgrey **p, int n_images, int *widths, int *heights)
 {
     int i;
 
@@ -326,8 +306,8 @@ void server(int argc, char **argv)
             if (req.image_nb != -1)
             {
                 // receive img
-                pixel *loc = image->p[req.image_nb] + req.height_start * image->width[req.image_nb];
-                MPI_Recv(loc, req.height * image->width[req.image_nb] * sizeof(pixel),
+                pgrey *loc = image->p[req.image_nb] + req.height_start * image->width[req.image_nb];
+                MPI_Recv(loc, req.height * image->width[req.image_nb] * sizeof(pgrey),
                          MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
             }
             else
@@ -338,7 +318,7 @@ void server(int argc, char **argv)
                          MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
             }
 
-            pixel *start_loc;
+            pgrey *start_loc;
             int height;
             int recv_height;
             int recv_height_start;
@@ -364,7 +344,7 @@ void server(int argc, char **argv)
             int img_dims[] = {image->width[i], height};
             MPI_Send(img_dims, 2, MPI_INT, stat.MPI_SOURCE, tag_send_dim, MPI_COMM_WORLD);
             // then pixels
-            MPI_Send(start_loc, height * image->width[i] * sizeof(pixel),
+            MPI_Send(start_loc, height * image->width[i] * sizeof(pgrey),
                      MPI_BYTE, stat.MPI_SOURCE, tag, MPI_COMM_WORLD);
 
             requests[stat.MPI_SOURCE].image_nb = i;
@@ -394,8 +374,8 @@ void server(int argc, char **argv)
             if (req.image_nb != -1)
             {
                 // receive img
-                pixel *loc = image->p[req.image_nb] + req.height_start * image->width[req.image_nb];
-                MPI_Recv(loc, image->height[req.image_nb] * image->width[req.image_nb] * sizeof(pixel),
+                pgrey *loc = image->p[req.image_nb] + req.height_start * image->width[req.image_nb];
+                MPI_Recv(loc, image->height[req.image_nb] * image->width[req.image_nb] * sizeof(pgrey),
                          MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
             }
             else
@@ -406,7 +386,7 @@ void server(int argc, char **argv)
                          MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
             }
 
-            pixel *start_loc = image->p[i] + image->width[i] * (curr_height - 1);
+            pgrey *start_loc = image->p[i] + image->width[i] * (curr_height - 1);
             int height = best_height;
             if (height > end_eight - curr_height)
             {
@@ -419,7 +399,7 @@ void server(int argc, char **argv)
             int img_dims[] = {image->width[i], send_height};
             MPI_Send(img_dims, 2, MPI_INT, stat.MPI_SOURCE, tag_send_dim, MPI_COMM_WORLD);
             // then pixels
-            MPI_Send(start_loc, send_height * image->width[i] * sizeof(pixel),
+            MPI_Send(start_loc, send_height * image->width[i] * sizeof(pgrey),
                      MPI_BYTE, stat.MPI_SOURCE, tag_send_middle_part, MPI_COMM_WORLD);
 
             requests[stat.MPI_SOURCE].image_nb = i;
@@ -441,8 +421,8 @@ void server(int argc, char **argv)
             if (req.image_nb != -1)
             {
                 // receive img
-                pixel *loc = image->p[req.image_nb] + req.height_start * image->width[req.image_nb];
-                MPI_Recv(loc, image->height[req.image_nb] * image->width[req.image_nb] * sizeof(pixel),
+                pgrey *loc = image->p[req.image_nb] + req.height_start * image->width[req.image_nb];
+                MPI_Recv(loc, image->height[req.image_nb] * image->width[req.image_nb] * sizeof(pgrey),
                          MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
             }
             else
@@ -506,11 +486,11 @@ void client()
 
         int width = dims[0];
         int height = dims[1];
-        pixel *p = (pixel *)malloc(width * height * sizeof(pixel));
-        MPI_Recv(p, width * height * sizeof(pixel), MPI_BYTE, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &stat);
+        pgrey *p = (pgrey *)malloc(width * height * sizeof(pgrey));
+        MPI_Recv(p, width * height * sizeof(pgrey), MPI_BYTE, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &stat);
 
         /* Convert the pixels into grayscale */
-        apply_gray_filter_img(p, width, height);
+        //apply_gray_filter_img(p, width, height);
 
         /* Apply blur filter with convergence value */
         if (stat.MPI_TAG == tag_send_bottom)
@@ -525,7 +505,7 @@ void client()
         /* Apply sobel filter on pixels */
         apply_sobel_filter_img(p, width, height);
 
-        pixel *send_p = p;
+        pgrey *send_p = p;
         int send_height = height;
 
         if (stat.MPI_TAG != tag_send_bottom)
@@ -538,7 +518,7 @@ void client()
             send_height--;
         }
 
-        MPI_Send(send_p, width * send_height * sizeof(pixel), MPI_BYTE, 0, tag_ready, MPI_COMM_WORLD);
+        MPI_Send(send_p, width * send_height * sizeof(pgrey), MPI_BYTE, 0, tag_ready, MPI_COMM_WORLD);
 
         free(p);
     }
@@ -553,7 +533,7 @@ void even_distribution(int argc, char **argv)
     double duration;
     int i;
 
-    pixel **p;
+    pgrey **p;
     int n_images;
     int *widths, *heights;
     int *distribution;
@@ -614,7 +594,7 @@ void even_distribution(int argc, char **argv)
             for (k = 0; k < distribution[i]; k++)
             {
                 // TODO: do this asynchronously
-                MPI_Send(image->p[image_idx], (image->width[image_idx] * image->height[image_idx]) * sizeof(pixel),
+                MPI_Send(image->p[image_idx], (image->width[image_idx] * image->height[image_idx]) * sizeof(pgrey),
                          MPI_BYTE, i, 0, MPI_COMM_WORLD);
                 image_idx++;
             }
@@ -634,17 +614,17 @@ void even_distribution(int argc, char **argv)
         MPI_Scatterv(NULL, NULL, NULL, MPI_INT, widths, n_images, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Scatterv(NULL, NULL, NULL, MPI_INT, heights, n_images, MPI_INT, 0, MPI_COMM_WORLD);
 
-        p = (pixel **)malloc(n_images * sizeof(pixel *));
+        p = (pgrey **)malloc(n_images * sizeof(pgrey *));
         for (i = 0; i < n_images; i++)
         {
-            p[i] = (pixel *)malloc(widths[i] * heights[i] * sizeof(pixel));
+            p[i] = (pgrey *)malloc(widths[i] * heights[i] * sizeof(pgrey));
             MPI_Status stat;
-            MPI_Recv(p[i], widths[i] * heights[i] * sizeof(pixel), MPI_BYTE, 0, 0, MPI_COMM_WORLD, &stat);
+            MPI_Recv(p[i], widths[i] * heights[i] * sizeof(pgrey), MPI_BYTE, 0, 0, MPI_COMM_WORLD, &stat);
         }
     }
 
     /* Convert the pixels into grayscale */
-    apply_gray_filter(p, n_images, widths, heights);
+    //apply_gray_filter(p, n_images, widths, heights);
 
     /* Apply blur filter with convergence value */
     apply_blur_filter(p, n_images, widths, heights, blur_size, blur_threshold);
@@ -662,7 +642,7 @@ void even_distribution(int argc, char **argv)
             for (k = 0; k < distribution[i]; k++)
             {
                 MPI_Status stat;
-                MPI_Recv(image->p[image_idx], (image->width[image_idx] * image->height[image_idx]) * sizeof(pixel),
+                MPI_Recv(image->p[image_idx], (image->width[image_idx] * image->height[image_idx]) * sizeof(pgrey),
                          MPI_BYTE, i, 0, MPI_COMM_WORLD, &stat);
                 image_idx++;
             }
@@ -672,7 +652,7 @@ void even_distribution(int argc, char **argv)
     {
         for (i = 0; i < n_images; i++)
         {
-            MPI_Send(p[i], widths[i] * heights[i] * sizeof(pixel),
+            MPI_Send(p[i], widths[i] * heights[i] * sizeof(pgrey),
                      MPI_BYTE, 0, 0, MPI_COMM_WORLD);
         }
     }
