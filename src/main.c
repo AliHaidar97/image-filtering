@@ -10,9 +10,11 @@
 #include <omp.h>
 #include <mpi.h>
 #include <unistd.h>
+#include <string.h>
 
 #include "gif_lib.h"
 #include "gif_load_store.h"
+#include "cuda_sobelf.h"
 
 // minimum number of nodes to switch from a even distribution approach to a server-client approach
 #define MIN_NODES_SERVER_CLIENT 5
@@ -296,6 +298,7 @@ void server(int argc, char **argv)
     }
 
     // first send all top and bottom parts
+    
     for (int i = 0; i < image->n_images; i++)
     {
         for (int k = 0; k < 2; k++)
@@ -375,7 +378,7 @@ void server(int argc, char **argv)
             {
                 // receive img
                 pgrey *loc = image->p[req.image_nb] + req.height_start * image->width[req.image_nb];
-                MPI_Recv(loc, image->height[req.image_nb] * image->width[req.image_nb] * sizeof(pgrey),
+                MPI_Recv(loc, req.height * image->width[req.image_nb] * sizeof(pgrey),
                          MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
             }
             else
@@ -422,7 +425,7 @@ void server(int argc, char **argv)
             {
                 // receive img
                 pgrey *loc = image->p[req.image_nb] + req.height_start * image->width[req.image_nb];
-                MPI_Recv(loc, image->height[req.image_nb] * image->width[req.image_nb] * sizeof(pgrey),
+                MPI_Recv(loc, req.height * image->width[req.image_nb] * sizeof(pgrey),
                          MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
             }
             else
@@ -490,17 +493,22 @@ void client()
         MPI_Recv(p, width * height * sizeof(pgrey), MPI_BYTE, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &stat);
 
         /* Convert the pixels into grayscale */
-        //apply_gray_filter_img(p, width, height);
+        // apply_gray_filter_img(p, width, height);
 
         /* Apply blur filter with convergence value */
+        int position = 0;
         if (stat.MPI_TAG == tag_send_bottom)
         {
-            apply_blur_filter_img(p, width, height - 1, blur_size, blur_threshold);
+            //apply_blur_filter_img(p, width, height - 1, blur_size, blur_threshold);
+            position = 1;
         }
         else if (stat.MPI_TAG == tag_send_top)
         {
-            apply_blur_filter_img(p + width, width, height - 1, blur_size, blur_threshold);
+            //apply_blur_filter_img(p + width, width, height - 1, blur_size, blur_threshold);
+            position = 2;
         }
+
+        apply_filter_cuda(p, width, height, position, blur_size, blur_threshold);
 
         /* Apply sobel filter on pixels */
         apply_sobel_filter_img(p, width, height);
@@ -624,7 +632,7 @@ void even_distribution(int argc, char **argv)
     }
 
     /* Convert the pixels into grayscale */
-    //apply_gray_filter(p, n_images, widths, heights);
+    // apply_gray_filter(p, n_images, widths, heights);
 
     /* Apply blur filter with convergence value */
     apply_blur_filter(p, n_images, widths, heights, blur_size, blur_threshold);
