@@ -297,6 +297,12 @@ void server(int argc, char **argv)
         requests[i].image_nb = -1;
     }
 
+    // we need to store the result in another location, otherwise lines between chunks maybe be overwritten
+    pgrey** result_p = (pgrey**)malloc(image->n_images * sizeof(pgrey*));
+    for(int i = 0; i < image->n_images; i++){
+        result_p[i] = (pgrey*)malloc(image->width[i] * image->height[i] * sizeof(pgrey));
+    }
+
     // first send all top and bottom parts
     
     for (int i = 0; i < image->n_images; i++)
@@ -309,7 +315,7 @@ void server(int argc, char **argv)
             if (req.image_nb != -1)
             {
                 // receive img
-                pgrey *loc = image->p[req.image_nb] + req.height_start * image->width[req.image_nb];
+                pgrey *loc = result_p[req.image_nb] + req.height_start * image->width[req.image_nb];
                 MPI_Recv(loc, req.height * image->width[req.image_nb] * sizeof(pgrey),
                          MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
             }
@@ -377,7 +383,7 @@ void server(int argc, char **argv)
             if (req.image_nb != -1)
             {
                 // receive img
-                pgrey *loc = image->p[req.image_nb] + req.height_start * image->width[req.image_nb];
+                pgrey *loc = result_p[req.image_nb] + req.height_start * image->width[req.image_nb];
                 MPI_Recv(loc, req.height * image->width[req.image_nb] * sizeof(pgrey),
                          MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
             }
@@ -424,7 +430,7 @@ void server(int argc, char **argv)
             if (req.image_nb != -1)
             {
                 // receive img
-                pgrey *loc = image->p[req.image_nb] + req.height_start * image->width[req.image_nb];
+                pgrey *loc = result_p[req.image_nb] + req.height_start * image->width[req.image_nb];
                 MPI_Recv(loc, req.height * image->width[req.image_nb] * sizeof(pgrey),
                          MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
             }
@@ -441,6 +447,8 @@ void server(int argc, char **argv)
     }
 
     free(requests);
+
+    image->p = result_p;
 
     /* FILTER Timer stop */
     gettimeofday(&t2, NULL);

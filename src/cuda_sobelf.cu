@@ -6,14 +6,13 @@
 #define numBlocks 64
 #define threadsPerBlock 64
 
-__device__ bool is_blur_done;
+__device__ int is_blur_done;
 
 #define CONV(l, c, nb_c) \
     (l) * (nb_c) + (c)
 
 __global__ void apply_blur_filter_kernel(pgrey *p, int delta_p, pgrey *temp, int width, int height, int size, int threshold)
 {
-    
     p += delta_p;
 
     int first_i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -66,7 +65,7 @@ __global__ void apply_blur_filter_kernel(pgrey *p, int delta_p, pgrey *temp, int
     {
         int diff = p[i] - temp[i];
         if(diff > threshold || diff < -threshold){
-            is_blur_done = false;
+            is_blur_done = 0;
         }
         p[i] = temp[i];
         i += delta;
@@ -84,19 +83,19 @@ void apply_filter_cuda(pgrey *p, int width, int height, int position, int size, 
 
     if(position != 0){
         // we need to blur this part
-        bool done;
+        int done;
         int n_iter = 0;
         do
         {
-            done = true;
-            cudaMemcpyToSymbol("is_blur_done", &done, 1);
+            done = 1;
+            cudaMemcpyToSymbol(is_blur_done, &done, sizeof(int));
             int delta_p = 0;
             int blur_height = height-1;
             if(position == 2){
                 delta_p = width;
             }
             apply_blur_filter_kernel<<<numBlocks,threadsPerBlock>>>(d_p, delta_p, d_temp, width, blur_height, size, threshold);
-            cudaMemcpyFromSymbol(&done, "is_blur_done", 1);
+            cudaMemcpyFromSymbol(&done, is_blur_done, sizeof(int));
             n_iter++;
         } while (!done);
     }
