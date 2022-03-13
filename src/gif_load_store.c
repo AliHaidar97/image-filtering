@@ -54,27 +54,14 @@ load_pixels(char *filename)
         return 0;
     }
 
-    /* Fill the width and height */
+    /* Allocate the array of pixels to be returned */
+    p = (pgrey **)malloc(n_images * sizeof(pgrey *));
 
-#pragma omp parallel
+    if (p == NULL)
     {
-#pragma omp for schedule(dynamic)
-        for (i = 0; i < n_images; i++)
-        {
-            width[i] = g->SavedImages[i].ImageDesc.Width;
-            height[i] = g->SavedImages[i].ImageDesc.Height;
-
-#if SOBELF_DEBUG
-            printf("Image %d: l:%d t:%d w:%d h:%d interlace:%d localCM:%p\n",
-                   i,
-                   g->SavedImages[i].ImageDesc.Left,
-                   g->SavedImages[i].ImageDesc.Top,
-                   g->SavedImages[i].ImageDesc.Width,
-                   g->SavedImages[i].ImageDesc.Height,
-                   g->SavedImages[i].ImageDesc.Interlace,
-                   g->SavedImages[i].ImageDesc.ColorMap);
-#endif
-        }
+        fprintf(stderr, "Unable to allocate array of %d images\n",
+                n_images);
+        return NULL;
     }
 
     /* Get the global colormap */
@@ -85,60 +72,41 @@ load_pixels(char *filename)
         return NULL;
     }
 
-#if SOBELF_DEBUG
-    printf("Global color map: count:%d bpp:%d sort:%d\n",
-           g->SColorMap->ColorCount,
-           g->SColorMap->BitsPerPixel,
-           g->SColorMap->SortFlag);
-#endif
+    /* Fill the width and height */
 
-    /* Allocate the array of pixels to be returned */
-    p = (pgrey **)malloc(n_images * sizeof(pgrey *));
-    if (p == NULL)
+    for (i = 0; i < n_images; i++)
     {
-        fprintf(stderr, "Unable to allocate array of %d images\n",
-                n_images);
-        return NULL;
-    }
 
-#pragma omp parallel
-    {
-#pragma omp for schedule(dynamic)
-        for (i = 0; i < n_images; i++)
+        width[i] = g->SavedImages[i].ImageDesc.Width;
+        height[i] = g->SavedImages[i].ImageDesc.Height;
+
+        p[i] = (pgrey *)malloc(width[i] * height[i] * sizeof(pgrey));
+        /*
+         if (p[i] == NULL)
+         {
+             fprintf(stderr, "Unable to allocate %d-th array of %d pixels\n",
+                 i, width[i] * height[i]);
+             return NULL;
+         }
+         */
+
+        int j;
+
+        /* Get the local colormap if needed */
+        if (g->SavedImages[i].ImageDesc.ColorMap)
         {
-            p[i] = (pgrey *)malloc(width[i] * height[i] * sizeof(pgrey));
-            /*
-             if (p[i] == NULL)
-             {
-                 fprintf(stderr, "Unable to allocate %d-th array of %d pixels\n",
-                     i, width[i] * height[i]);
-                 return NULL;
-             }
-             */
+
+            /* TODO No support for local color map */
+            /* fprintf(stderr, "Error: application does not support local colormap\n");
+             return NULL;*/
+
+            colmap = g->SavedImages[i].ImageDesc.ColorMap;
         }
-    }
-    /* Fill pixels */
+        /* Traverse the image and fill pixels */
 
-    /* For each image */
 #pragma omp parallel
-    {
-#pragma omp for schedule(dynamic)
-        for (i = 0; i < n_images; i++)
         {
-            int j;
-
-            /* Get the local colormap if needed */
-            if (g->SavedImages[i].ImageDesc.ColorMap)
-            {
-
-                /* TODO No support for local color map */
-                /* fprintf(stderr, "Error: application does not support local colormap\n");
-                 return NULL;*/
-
-                colmap = g->SavedImages[i].ImageDesc.ColorMap;
-            }
-            /* Traverse the image and fill pixels */
-
+#pragma omp for schedule(static)
             for (j = 0; j < width[i] * height[i]; j++)
             {
                 int c;
@@ -228,7 +196,8 @@ int store_pixels(char *filename, animated_gif *image)
     }
 
     // we only have 2 colors in the resulting gif
-    for(i = 0; i < 256; i++){
+    for (i = 0; i < 256; i++)
+    {
         colormap[i].Red = i;
         colormap[i].Green = i;
         colormap[i].Blue = i;

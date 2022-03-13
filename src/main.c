@@ -474,9 +474,12 @@ void server(int argc, char **argv)
     printf("Export done in %lf s in file %s\n", duration, output_filename);
 }
 
+bool can_use_cuda;
+
 // code executed by all mpi nodes != 0, apply sobel filters on parts of the image received
 void client()
 {
+    can_use_cuda = cuda_init(rank);
     int i;
 
     // send msg telling the server it is ready
@@ -507,19 +510,24 @@ void client()
         int position = 0;
         if (stat.MPI_TAG == tag_send_bottom)
         {
-            //apply_blur_filter_img(p, width, height - 1, blur_size, blur_threshold);
+            if(!can_use_cuda)
+                apply_blur_filter_img(p, width, height - 1, blur_size, blur_threshold);
+
             position = 1;
         }
         else if (stat.MPI_TAG == tag_send_top)
         {
-            //apply_blur_filter_img(p + width, width, height - 1, blur_size, blur_threshold);
+            if(!can_use_cuda)
+                apply_blur_filter_img(p + width, width, height - 1, blur_size, blur_threshold);
             position = 2;
         }
 
-        apply_filter_cuda(p, width, height, position, blur_size, blur_threshold);
-
-        /* Apply sobel filter on pixels */
-        //apply_sobel_filter_img(p, width, height);
+        if(can_use_cuda){
+            apply_filter_cuda(p, width, height, position, blur_size, blur_threshold);
+        } else {
+            /* Apply sobel filter on pixels */
+            apply_sobel_filter_img(p, width, height);
+        }
 
         pgrey *send_p = p;
         int send_height = height;
@@ -548,6 +556,8 @@ void even_distribution(int argc, char **argv)
     struct timeval t1, t2;
     double duration;
     int i;
+
+    can_use_cuda = cuda_init(rank);
 
     pgrey **p;
     int n_images;
@@ -642,11 +652,27 @@ void even_distribution(int argc, char **argv)
     /* Convert the pixels into grayscale */
     // apply_gray_filter(p, n_images, widths, heights);
 
-    /* Apply blur filter with convergence value */
-    apply_blur_filter(p, n_images, widths, heights, blur_size, blur_threshold);
+    if(can_use_cuda){
+        for(int i = 0; i < n_images; i++){
+            int bottom_height = heights[i]/10;
+            int top_height = (int)(heights[i] * 0.9);
 
-    /* Apply sobel filter on pixels */
-    apply_sobel_filter(p, n_images, widths, heights);
+            // apply only blur
+            apply_filter_cuda(p[i], widths[i], bottom_height, 4, blur_size, blur_threshold);
+            apply_filter_cuda(p[i] + widths[i]*top_height, widths[i], heights[i] - top_height, 5, blur_size, blur_threshold);
+
+            // apply sobel
+            apply_filter_cuda(p[i], widths[i], heights[i], 0, blur_size, blur_threshold);
+        }
+    } else {
+
+        /* Apply blur filter with convergence value */
+        apply_blur_filter(p, n_images, widths, heights, blur_size, blur_threshold);
+
+        /* Apply sobel filter on pixels */
+        apply_sobel_filter(p, n_images, widths, heights);
+
+    }
 
     // on recupere toutes les images sur le proc 0
     if (rank == 0)

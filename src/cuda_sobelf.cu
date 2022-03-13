@@ -87,14 +87,15 @@ __global__ void apply_sobel_filter_kernel(pgrey *p, pgrey *sobel, int width, int
         int j = i / width;
         int k = i % width;
 
-        if (j == 0 || j == height - 1 || k == 0 || k == width - 1){
+        if (j == 0 || j == height - 1 || k == 0 || k == width - 1)
+        {
             i += delta;
             continue;
         }
 
         int pixel_blue_no, pixel_blue_n, pixel_blue_ne;
         int pixel_blue_so, pixel_blue_s, pixel_blue_se;
-        int pixel_blue_o, pixel_blue, pixel_blue_e;
+        int pixel_blue_o, /*pixel_blue,*/ pixel_blue_e;
 
         float deltaX_blue;
         float deltaY_blue;
@@ -107,7 +108,7 @@ __global__ void apply_sobel_filter_kernel(pgrey *p, pgrey *sobel, int width, int
         pixel_blue_s = p[CONV(j + 1, k, width)];
         pixel_blue_se = p[CONV(j + 1, k + 1, width)];
         pixel_blue_o = p[CONV(j, k - 1, width)];
-        pixel_blue = p[CONV(j, k, width)];
+        // pixel_blue = p[CONV(j, k, width)];
         pixel_blue_e = p[CONV(j, k + 1, width)];
 
         deltaX_blue = -pixel_blue_no + pixel_blue_ne - 2 * pixel_blue_o + 2 * pixel_blue_e - pixel_blue_so + pixel_blue_se;
@@ -135,7 +136,8 @@ __global__ void apply_sobel_filter_kernel(pgrey *p, pgrey *sobel, int width, int
         int j = i / width;
         int k = i % width;
 
-        if (j == 0 || j == height - 1 || k == 0 || k == width - 1){
+        if (j == 0 || j == height - 1 || k == 0 || k == width - 1)
+        {
             i += delta;
             continue;
         }
@@ -153,6 +155,11 @@ void apply_filter_cuda(pgrey *p, int width, int height, int position, int size, 
 
     cudaMalloc((void **)&d_temp, width * height * sizeof(pgrey));
 
+    bool do_apply_sobel = true;
+    if(position >= 3){
+        position -= 3;
+        do_apply_sobel = false;
+    }
     if (position != 0)
     {
         // we need to blur this part
@@ -174,10 +181,25 @@ void apply_filter_cuda(pgrey *p, int width, int height, int position, int size, 
         } while (!done);
     }
 
-    apply_sobel_filter_kernel<<<numBlocks, threadsPerBlock>>>(d_p, d_temp, width, height);
+    if(do_apply_sobel)
+        apply_sobel_filter_kernel<<<numBlocks, threadsPerBlock>>>(d_p, d_temp, width, height);
 
     cudaMemcpy(p, d_p, width * height * sizeof(pgrey), cudaMemcpyDeviceToHost);
 
     cudaFree(d_temp);
     cudaFree(d_p);
+}
+
+bool cuda_init(int mpirank)
+{
+    int nb_gpu;
+    cudaGetDeviceCount(&nb_gpu);
+
+    if(nb_gpu == 0){
+        return false;
+    }
+
+    cudaSetDevice(mpirank % nb_gpu);
+
+    return true;
 }
