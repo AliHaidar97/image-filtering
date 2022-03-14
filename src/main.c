@@ -304,19 +304,19 @@ void server(int argc, char **argv)
     }
 
     // first send all top and bottom parts
-    
     for (int i = 0; i < image->n_images; i++)
     {
         for (int k = 0; k < 2; k++)
         {
             MPI_Status stat;
+            MPI_Request request;
             MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &stat);
-            Request req = requests[stat.MPI_SOURCE];
-            if (req.image_nb != -1)
+            Request* req = &requests[stat.MPI_SOURCE];
+            if (req->image_nb != -1)
             {
                 // receive img
-                pgrey *loc = result_p[req.image_nb] + req.height_start * image->width[req.image_nb];
-                MPI_Recv(loc, req.height * image->width[req.image_nb] * sizeof(pgrey),
+                pgrey *loc = result_p[req->image_nb] + req->height_start * image->width[req->image_nb];
+                MPI_Recv(loc, req->height * image->width[req->image_nb] * sizeof(pgrey),
                          MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
             }
             else
@@ -353,12 +353,12 @@ void server(int argc, char **argv)
             int img_dims[] = {image->width[i], height};
             MPI_Send(img_dims, 2, MPI_INT, stat.MPI_SOURCE, tag_send_dim, MPI_COMM_WORLD);
             // then pixels
-            MPI_Send(start_loc, height * image->width[i] * sizeof(pgrey),
-                     MPI_BYTE, stat.MPI_SOURCE, tag, MPI_COMM_WORLD);
+            MPI_Isend(start_loc, height * image->width[i] * sizeof(pgrey),
+                     MPI_BYTE, stat.MPI_SOURCE, tag, MPI_COMM_WORLD, &request);
 
-            requests[stat.MPI_SOURCE].image_nb = i;
-            requests[stat.MPI_SOURCE].height_start = recv_height_start;
-            requests[stat.MPI_SOURCE].height = recv_height;
+            req->image_nb = i;
+            req->height_start = recv_height_start;
+            req->height = recv_height;
         }
     }
 
@@ -378,13 +378,14 @@ void server(int argc, char **argv)
         while (curr_height < end_eight)
         {
             MPI_Status stat;
+            MPI_Request request;
             MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &stat);
-            Request req = requests[stat.MPI_SOURCE];
-            if (req.image_nb != -1)
+            Request* req = &requests[stat.MPI_SOURCE];
+            if (req->image_nb != -1)
             {
                 // receive img
-                pgrey *loc = result_p[req.image_nb] + req.height_start * image->width[req.image_nb];
-                MPI_Recv(loc, req.height * image->width[req.image_nb] * sizeof(pgrey),
+                pgrey *loc = result_p[req->image_nb] + req->height_start * image->width[req->image_nb];
+                MPI_Recv(loc, req->height * image->width[req->image_nb] * sizeof(pgrey),
                          MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
             }
             else
@@ -408,12 +409,12 @@ void server(int argc, char **argv)
             int img_dims[] = {image->width[i], send_height};
             MPI_Send(img_dims, 2, MPI_INT, stat.MPI_SOURCE, tag_send_dim, MPI_COMM_WORLD);
             // then pixels
-            MPI_Send(start_loc, send_height * image->width[i] * sizeof(pgrey),
-                     MPI_BYTE, stat.MPI_SOURCE, tag_send_middle_part, MPI_COMM_WORLD);
+            MPI_Isend(start_loc, send_height * image->width[i] * sizeof(pgrey),
+                     MPI_BYTE, stat.MPI_SOURCE, tag_send_middle_part, MPI_COMM_WORLD, &request);
 
-            requests[stat.MPI_SOURCE].image_nb = i;
-            requests[stat.MPI_SOURCE].height_start = curr_height;
-            requests[stat.MPI_SOURCE].height = height;
+            req->image_nb = i;
+            req->height_start = curr_height;
+            req->height = height;
 
             curr_height += height;
         }
@@ -426,12 +427,12 @@ void server(int argc, char **argv)
         {
             MPI_Status stat;
             MPI_Probe(r, MPI_ANY_TAG, MPI_COMM_WORLD, &stat);
-            Request req = requests[r];
-            if (req.image_nb != -1)
+            Request* req = &requests[r];
+            if (req->image_nb != -1)
             {
                 // receive img
-                pgrey *loc = result_p[req.image_nb] + req.height_start * image->width[req.image_nb];
-                MPI_Recv(loc, req.height * image->width[req.image_nb] * sizeof(pgrey),
+                pgrey *loc = result_p[req->image_nb] + req->height_start * image->width[req->image_nb];
+                MPI_Recv(loc, req->height * image->width[req->image_nb] * sizeof(pgrey),
                          MPI_BYTE, stat.MPI_SOURCE, stat.MPI_TAG, MPI_COMM_WORLD, &stat);
             }
             else
@@ -619,9 +620,9 @@ void even_distribution(int argc, char **argv)
             int k;
             for (k = 0; k < distribution[i]; k++)
             {
-                // TODO: do this asynchronously
-                MPI_Send(image->p[image_idx], (image->width[image_idx] * image->height[image_idx]) * sizeof(pgrey),
-                         MPI_BYTE, i, 0, MPI_COMM_WORLD);
+                MPI_Request req;
+                MPI_Isend(image->p[image_idx], (image->width[image_idx] * image->height[image_idx]) * sizeof(pgrey),
+                         MPI_BYTE, i, 0, MPI_COMM_WORLD, &req);
                 image_idx++;
             }
         }
