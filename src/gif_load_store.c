@@ -250,10 +250,14 @@ int store_pixels(char *filename, animated_gif *image)
     /* Update the raster bits according to color map */
     for (i = 0; i < image->n_images; i++)
     {
+#pragma omp parallel
+    {
+#pragma omp for schedule(static) 
         for (j = 0; j < image->width[i] * image->height[i]; j++)
         {
             image->g->SavedImages[i].RasterBits[j] = p[i][j];
         }
+    }
     }
 
     /* Write the final image */
